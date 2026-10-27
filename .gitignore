@@ -1,0 +1,39 @@
+# External repos, cloned separately (pinned commits in README.md)
+openvla-oft/
+LIBERO/
+
+# Model weights and large data (live on /mnt/ssd/yibo)
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.ckpt
+*.npz
+hf/
+
+# Run outputs
+rollouts/
+logs/
+wandb/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Planning docs (kept local)
+docs/*PLAN*.md
+
+# Sample rollout videos (kept local)
+videos/
+
+# Working notes (kept local)
+ISSUES.md
+docs/BACKGROUND.md
