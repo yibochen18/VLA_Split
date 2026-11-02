@@ -382,14 +382,16 @@ In closed loop (Spatial, 100 episodes each; the shared GPU adds ~1 ms of noise):
 
 Real model on these scenes: 95.
 
-Model 2 alone, per query (median):
+Model 2 alone, per query (median of 200 calls; GPU in bf16, CPU in fp32, AMD Threadripper PRO 5955WX, one thread):
 
 | | GPU | One CPU thread |
 |---|---|---|
-| MLP head (151M) | 0.49 ms | 537 ms |
+| MLP head (151M) | 0.49 ms | 60 ms |
 | Linear map (0.2M) | 0.11 ms | 0.16 ms |
 
-Replacing only the head saves almost nothing on the GPU (0.4 ms of ~100 ms); the saving comes from dropping Llama layers. On a single CPU core, a stand-in for a TEE, the MLP head is far too slow for real-time control and the linear map is ~3,400× faster.
+Replacing only the head saves almost nothing on the GPU (0.4 ms of ~100 ms); the saving comes from dropping Llama layers. On one CPU thread, a stand-in for a TEE core, the linear map is ~380× cheaper than the MLP head, though both fit easily within the ~400 ms an action chunk lasts (8 steps at LIBERO's 20 Hz).
+
+*Correction (2026-11-02):* the first version of this table gave 537 ms for the MLP head on CPU. That run kept the head in bf16, which this CPU has no native support for (no AVX-512 BF16 or AMX), so PyTorch fell back to a slow path. Re-timed in fp32 (`bench_depth.py` now does this): 60 ms, with actions within 0.0025 of the bf16 head's. The earlier claims of "~3,400× faster" and "too slow for real-time control" were wrong.
 
 ### Observed queries needed
 

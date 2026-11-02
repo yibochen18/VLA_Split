@@ -136,11 +136,13 @@ def main():
         for device in ["cuda:0", "cpu"]:
             m2 = Model2.load(bundle, device)
             x = ref[0][32].to(device)
+            if device == "cpu" and name == "mlp":  # no native bf16 on most CPUs: time the MLP head in fp32
+                m2.head, x = m2.head.float(), x.float()
             m2(x)
-            reps = 5 if (name, device) == ("mlp", "cpu") else 200
             heads[f"{name}_{device.split(':')[0]}"] = {
-                **stats(timed(lambda _: m2(x), reps, cuda=device != "cpu")),
-                "params": sum(p.numel() for p in m2.head.parameters()), "bundle": str(bundle)}
+                **stats(timed(lambda _: m2(x), 200, cuda=device != "cpu")),
+                "params": sum(p.numel() for p in m2.head.parameters()), "bundle": str(bundle),
+                "dtype": str(next(m2.head.parameters()).dtype).replace("torch.", "")}
             print(name, device, heads[f"{name}_{device.split(':')[0]}"], flush=True)
             del m2
     result["model2"] = heads
