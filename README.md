@@ -6,7 +6,7 @@ Main findings: the split is exact; Model 2 can be copied from ~100 observed quer
 
 | Document | Contents |
 |---|---|
-| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness |
+| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness, CPU TEE budget |
 
 ## Layout
 
@@ -53,4 +53,5 @@ split/run_linear_layers.sh, run_linear_refs.sh   depth sweep and same-scene refe
 split/run_linear_compute.sh                      compute saved and observation needed (§11)
 split/run_linear_followup.sh                     limits of depth and controls (§12)
 split/run_robustness.sh                          robustness under distribution shift (§13)
+split/bench_tee.py                               what fits in a CPU TEE (§14)
 ```

@@ -2,7 +2,7 @@
 
 Running record of measured results for the OpenVLA-OFT split project.
 
-**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11).
+**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11). On a CPU, as in an edge TEE, one Llama layer takes 0.3–2 s per query, against ~400 ms per action chunk, so an edge TEE can hold a cut-A-sized readout but not transformer layers (§14).
 
 ---
 
@@ -514,3 +514,23 @@ Setups: the real model; the linear map in place of the head (§8 fold 4); Model 
 **Caveats:** one perturbation strength per kind, 100 episodes per cell, one seed; Spatial and Long only.
 
 Data: `$VLA_DATA/robustness/evals/`.
+
+---
+
+## 14. What fits in a CPU TEE
+
+`split/bench_tee.py` (2026-11-02). An edge TEE (Arm TrustZone, Intel SGX/TDX, AMD SEV-SNP) runs on the CPU, so whatever Model 2 contains has to run there. Time per query in fp32 on this server's CPU (AMD Threadripper PRO 5955WX; median of 5 calls for the layer, 100 for the heads). The Llama layer has random weights, since its time does not depend on them, and runs on OFT's real sequence: 606 tokens on Spatial (600–606 depending on the instruction: 513 vision and proprio tokens, the prompt, 56 action slots, the stop token).
+
+| Part | Params | 1 thread | 4 threads | 8 threads |
+|---|---|---|---|---|
+| One Llama-2-7B layer (606 tokens) | 202M | 2,053 ms | 700 ms | 322 ms |
+| MLP head + post-processing | 151M | 59 ms | 23 ms | 18 ms |
+| Linear map | 0.2M | 0.14 ms | 0.14 ms | 0.10 ms |
+
+One query produces an 8-step action chunk, which lasts ~400 ms at LIBERO's 20 Hz. That is the most a query can take without the robot waiting, before counting Model 1's ~100 ms.
+
+- **One Llama layer uses about the whole budget even on 8 desktop cores**, and this core already runs it near its peak (~120 GFLOP/s: one layer is ~250 GFLOP per query). An edge ARM core, e.g. Jetson Orin's Cortex-A78AE, has roughly a quarter of that peak fp32 throughput (from specifications, not measured), and TrustZone secure memory is often far smaller than one layer's 0.8 GB in fp32.
+- **Heads fit easily:** the MLP head takes 18–59 ms, the linear map well under 1 ms.
+- **Consequence for protection:** on an edge CPU TEE, Model 2 can only be a readout on top of Model 1's features, i.e. cut A or something of its size. §6 and §8 show such a readout is copied, or replaced by a linear map, from ~100 observed queries. Deeper cuts (§7, §10–§12) need transformer layers in the TEE, which do not fit there; they would need a GPU TEE (e.g. NVIDIA confidential computing), and a GPU TEE can hold the whole model without splitting it.
+
+Data: `$VLA_DATA/linear_compute/bench/tee_spatial.json`.
