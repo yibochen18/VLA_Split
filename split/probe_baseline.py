@@ -1,17 +1,4 @@
-"""Step 1 probe of the unsplit OpenVLA-OFT policy on LIBERO.
-
-Runs a few episodes through the stock eval loop (openvla-oft is not modified) and:
-  1. records a reference dataset of every model query: inputs, the 56x4096 hidden states
-     that feed the action head (the cut-A interface), normalized and final actions;
-  2. times each component per query (vision, projector, proprio, LLM, action head);
-  3. repeats the same episodes with the same seed and checks the results are identical;
-  4. re-runs the action head alone on the saved hidden states (a preview of the split);
-  5. reports the action head's size and the interface size.
-
-Usage (from openvla-oft/, so its `experiments` package is importable):
-    CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl python ../split/probe_baseline.py \
-        --checkpoint moojink/openvla-7b-oft-finetuned-libero-spatial --suite libero_spatial
-"""
+"""Probe the unsplit model: reference dataset, sizes, determinism, head-only replay and latency."""
 
 import argparse
 import copy
@@ -28,6 +15,8 @@ import experiments.robot.libero.run_libero_eval as rle
 from experiments.robot.libero.libero_utils import get_libero_env
 from experiments.robot.robot_utils import get_image_resize_size, set_seed_everywhere
 
+import paths
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -36,7 +25,9 @@ def parse_args():
     p.add_argument("--episodes_per_task", type=int, default=1)
     p.add_argument("--passes", type=int, default=2, help="Repeat the same episodes to check determinism")
     p.add_argument("--seed", type=int, default=7)
-    p.add_argument("--out_dir", default="/mnt/ssd/yibo/reference")
+    p.add_argument("--out_dir", default=str(paths.REFERENCE))
+    p.add_argument("--no_component_timers", action="store_true",
+                   help="Skip per-module CUDA-synced timers (they add overhead); time get_action end to end only")
     return p.parse_args()
 
 
@@ -88,7 +79,7 @@ def main():
     model, action_head, proprio_projector, noisy_action_projector, processor = rle.initialize_model(cfg)
     resize_size = get_image_resize_size(cfg)
 
-    # --- Sizes -------------------------------------------------------------------------------
+    # Sizes
     sizes = {
         "action_head_params": count_params(action_head),
         "action_head_bytes": module_bytes(action_head),
@@ -98,15 +89,16 @@ def main():
         "vla_bytes": module_bytes(model),
     }
 
-    # --- Instrumentation -----------------------------------------------------------------------
+    # Instrumentation
     timer = ComponentTimer()
-    timer.attach("vision_backbone", model.vision_backbone)
-    timer.attach("projector", model.projector)
-    timer.attach("proprio_projector", proprio_projector)
-    timer.attach("language_model", model.language_model)
-    timer.attach("action_head", action_head.model)
+    if not args.no_component_timers:
+        timer.attach("vision_backbone", model.vision_backbone)
+        timer.attach("projector", model.projector)
+        timer.attach("proprio_projector", proprio_projector)
+        timer.attach("language_model", model.language_model)
+        timer.attach("action_head", action_head.model)
 
-    # Capture the interface tensor: the head's input (hidden states) and output (normalized actions)
+    # Capture the head's input and output
     captured = {}
     head_predict = action_head.predict_action
 
@@ -118,7 +110,7 @@ def main():
 
     action_head.predict_action = recording_predict_action
 
-    # Record every model query made by the stock run_episode loop
+    # Record every model query
     queries = []
     episode_ctx = {}
     stock_get_action = rle.get_action
@@ -147,7 +139,7 @@ def main():
 
     rle.get_action = recording_get_action
 
-    # --- Run the same episodes `passes` times ------------------------------------------------
+    # Run the same episodes `passes` times
     task_suite = benchmark.get_benchmark_dict()[cfg.task_suite_name]()
     rle.check_unnorm_key(cfg, model)
     passes = []
@@ -174,7 +166,7 @@ def main():
 
     ref = passes[0]["queries"]
 
-    # --- Determinism across passes -----------------------------------------------------------
+    # Determinism across passes
     determinism = None
     if len(passes) > 1:
         other = passes[1]["queries"]
@@ -192,7 +184,7 @@ def main():
             "max_abs_action_diff": max_action_diff,
         }
 
-    # --- Head-only replay on saved hidden states (preview of the cut-A split) --------------------
+    # Head-only replay on saved hidden states (preview of the cut-A split)
     device = next(action_head.parameters()).device
     replay_diffs = []
     with torch.inference_mode():
@@ -204,7 +196,7 @@ def main():
         "bitwise_equal": all(d == 0.0 for d in replay_diffs),
     }
 
-    # --- Latency (first query excluded as warmup) ----------------------------------------------
+    # Latency (first query excluded as warmup)
     timed = ref[1:]
     latency_ms = {}
     for name in ["vision_backbone", "projector", "proprio_projector", "language_model", "action_head"]:
@@ -238,7 +230,7 @@ def main():
         "head_replay": head_replay,
     }
 
-    stem = f"{args.suite}_seed{args.seed}_{args.episodes_per_task}ep"
+    stem = f"{args.suite}_seed{args.seed}_{args.episodes_per_task}ep" + ("_notimers" if args.no_component_timers else "")
     torch.save({"summary": summary, "queries": ref}, out_dir / f"{stem}.pt")
     with open(out_dir / f"{stem}_summary.json", "w") as f:
         json.dump(summary, f, indent=2)

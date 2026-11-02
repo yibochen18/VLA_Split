@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# One-time setup for OpenVLA-OFT + LIBERO, then a short LIBERO-Spatial smoke test on GPU 1.
-# Log: /mnt/ssd/yibo/logs/setup.log
+# One-time OpenVLA-OFT + LIBERO setup, then a short LIBERO-Spatial smoke test.
 set -euo pipefail
 
-SSD=/mnt/ssd/yibo
-VLA=/home/yibochen/VLA
-CONDA_DIR=$SSD/miniconda3
-ENV=openvla-oft
+source "$(dirname "$0")/env.sh"
+SSD=$VLA_DATA
+VLA=$VLA_ROOT
+CONDA_DIR=$VLA_CONDA_DIR
+ENV=$VLA_CONDA_ENV
 
-mkdir -p $SSD/hf $SSD/logs $SSD/rollouts
+mkdir -p "$HF_HOME" "$VLA_LOGS" "$VLA_ROLLOUTS"
 step() { echo; echo "=== [$(date '+%F %T')] $* ==="; }
 
 step "1. HF_HOME in ~/.bashrc"
-grep -q 'HF_HOME=' ~/.bashrc || echo "export HF_HOME=$SSD/hf" >> ~/.bashrc
-export HF_HOME=$SSD/hf
+grep -q 'HF_HOME=' ~/.bashrc || echo "export HF_HOME=$HF_HOME" >> ~/.bashrc
 
 step "2. Miniconda at $CONDA_DIR"
 if [ ! -x $CONDA_DIR/bin/conda ]; then
@@ -46,7 +45,7 @@ pip install -e $VLA/LIBERO --config-settings editable_mode=compat
 pip install -r experiments/robot/libero/libero_requirements.txt
 # The requirements above pull in numpy 2 / opencv 5, which break torch 2.2 and tensorflow 2.15
 pip install "numpy<2" "opencv-python==4.10.0.84"
-# Newest tensorflow-metadata needs protobuf 5 (breaks tf 2.15); 1.15 pins protobuf 3.20, which needs an older wandb
+# protobuf 3.20 for tf 2.15 (needs an older wandb)
 pip install "tensorflow-metadata==1.15.0" "wandb==0.16.6"
 # mujoco 3.17 fails robosuite 1.4.1's joint-type assertion when building LIBERO scenes
 pip install "mujoco==3.3.0"
@@ -56,13 +55,13 @@ echo n | python -c "import libero.libero" || true
 step "7. Sanity check"
 python -c "import torch, transformers; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'transformers', transformers.__version__)"
 
-step "8. Smoke test: LIBERO-Spatial, 1 trial per task (10 episodes), GPU 1"
+step "8. Smoke test: LIBERO-Spatial, 1 trial per task (10 episodes), GPU $CUDA_VISIBLE_DEVICES"
 # Rollout videos are written to ./rollouts; keep them on the SSD
-[ -e rollouts ] || ln -s $SSD/rollouts rollouts
-CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl python experiments/robot/libero/run_libero_eval.py \
+[ -e rollouts ] || ln -s "$VLA_ROLLOUTS" rollouts
+python experiments/robot/libero/run_libero_eval.py \
     --pretrained_checkpoint moojink/openvla-7b-oft-finetuned-libero-spatial \
     --task_suite_name libero_spatial \
     --num_trials_per_task 1 \
-    --local_log_dir $SSD/logs
+    --local_log_dir "$VLA_LOGS"
 
 step "DONE"
