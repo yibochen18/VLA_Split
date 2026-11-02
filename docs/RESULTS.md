@@ -147,6 +147,8 @@ source env.sh && vla_activate && cd openvla-oft
 python ../split/probe_baseline.py            # reference dataset, latency, determinism
 ```
 
+The later experiments each name their script in their section; README.md lists them in order.
+
 ---
 
 ## 5. Cut A split (Model 1 = backbone, Model 2 = action head)

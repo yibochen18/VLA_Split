@@ -2,9 +2,11 @@
 
 Splitting OpenVLA-OFT into two models that run in sequence: Model 1 (vision encoders + Llama 2 backbone) produces an intermediate representation, and Model 2 (the MLP action head) turns it into robot actions. Evaluated on the LIBERO simulation benchmark.
 
+Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query).
+
 | Document | Contents |
 |---|---|
-| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction (copying) tests, linear-head study |
+| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness |
 
 ## Layout
 
@@ -38,3 +40,17 @@ bash setup_and_smoke_test.sh
 ```
 
 `setup_and_smoke_test.sh` documents the package pins needed on top of the upstream instructions.
+
+## Experiments
+
+Each script writes only under `$VLA_DATA`; run them in this order (RESULTS.md section in brackets):
+
+```
+split/run_baselines.sh, split/run_v3_all.sh      baselines and the bitwise split check (§1-5)
+split/run_extraction.sh, split/run_layers.sh     copying Model 2 at cut A and cuts B-k (§6-7)
+split/run_linear_record.sh, run_linear_cv.sh     linear head, 5-fold cross-validation (§8)
+split/run_linear_layers.sh, run_linear_refs.sh   depth sweep and same-scene references (§9-10)
+split/run_linear_compute.sh                      compute saved and observation needed (§11)
+split/run_linear_followup.sh                     limits of depth and controls (§12)
+split/run_robustness.sh                          robustness under distribution shift (§13)
+```
