@@ -15,15 +15,19 @@ import sys
 import time
 from pathlib import Path
 
+import jax
 import numpy as np
 import torch
+from openpi.models import model as _model
+from openpi.models_pytorch.pi0_pytorch import make_att_2d_masks
 from openpi.policies import policy_config
 from openpi.training import config as _config
 from openpi_client import image_tools
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pi05_protocol import MAGIC_END, MAGIC_QUERY, MAGIC_STATS, actions_to_bytes, encode_response, read_request  # noqa: E402
+from pi05_protocol import ACTION_SHAPE, MAGIC_END, MAGIC_QUERY, MAGIC_STATS, actions_to_bytes, encode_response, read_request  # noqa: E402
+from ridge_pi05 import STEPS, features  # noqa: E402
 
 RESIZE = 224  # openpi's LIBERO client resize
 ACTION_DIM = 7
@@ -70,6 +74,53 @@ class Recorder:
         self.episode = []
 
 
+class _Stop(Exception):
+    pass
+
+
+class LinearPolicy:
+    """π0.5 with its action expert replaced by a linear map (ridge_pi05.py): same input transforms and backbone,
+    stopped at the input of the last backbone layer (what the expert reads); layer 18 and the expert never run.
+    Returns the map's 5 actions; rows 6-10 of the 10 x 7 reply are NaN (never executed)."""
+
+    def __init__(self, policy, head_dir):
+        config = json.loads((Path(head_dir) / "config.json").read_text())
+        assert config["kind"] == "pi05_linear" and config["layer"] == "layer18_in", config
+        head = torch.load(Path(head_dir) / "linear.pt")
+        self.policy, self.model, self.pool = policy, policy._model, config["pool"]
+        self.device = policy._pytorch_device
+        self.weight, self.bias = head["weight"].T.to(self.device), head["bias"].to(self.device)
+        self.params = self.weight.numel() + self.bias.numel()
+        self._model = self.model  # for Server.stats
+        self.captured = None
+        lm = self.model.paligemma_with_expert.paligemma.language_model
+        lm.layers[-1].register_forward_pre_hook(self._stop, with_kwargs=True)
+
+    def _stop(self, module, args, kwargs):
+        self.captured = args[0] if args else kwargs["hidden_states"]
+        raise _Stop
+
+    @torch.inference_mode()
+    def infer(self, obs, noise=None):
+        inputs = self.policy._input_transform(jax.tree.map(lambda x: x, obs))
+        inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self.device)[None, ...], inputs)
+        model = self.model
+        images, img_masks, lang_tokens, lang_masks, _ = model._preprocess_observation(_model.Observation.from_dict(inputs), train=False)
+        prefix_embs, pad_masks, att_masks = model.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        att_4d = model._prepare_attention_masks_4d(make_att_2d_masks(pad_masks, att_masks))
+        model.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        try:
+            model.paligemma_with_expert.forward(attention_mask=att_4d, position_ids=torch.cumsum(pad_masks, dim=1) - 1,
+                                                past_key_values=None, inputs_embeds=[prefix_embs, None], use_cache=True)
+        except _Stop:
+            pass
+        states = self.captured[0][pad_masks[0]].to(torch.bfloat16)[None]
+        y = features(states, self.pool).float() @ self.weight + self.bias
+        actions = np.full(ACTION_SHAPE, np.nan)
+        actions[:STEPS] = y.reshape(STEPS, -1).double().cpu().numpy()
+        return {"actions": actions}
+
+
 class Server:
     def __init__(self, policy, seed, recorder, noise_samples=0, samples_dir=None):
         self.policy, self.seed, self.recorder = policy, seed, recorder
@@ -92,6 +143,7 @@ class Server:
             "bytes_out": self.bytes_out,
             "mean_ms": {k: 1e3 * sum(v) / len(v) for k, v in self.times.items() if v},
             "params": sum(p.numel() for p in model.parameters()),
+            "linear_map_params": getattr(self.policy, "params", None),
             "action_expert_params": sum(p.numel() for p in model.paligemma_with_expert.gemma_expert.parameters()),
             "cuda_max_memory_allocated": torch.cuda.max_memory_allocated(),
             "pid": os.getpid(),
@@ -160,11 +212,15 @@ def main():
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--seed", type=int, default=7, help="Base seed of the per-query noise")
     p.add_argument("--record_dir", default=None, help="Save the backbone states of every query, one file per episode")
+    p.add_argument("--linear", default=None, help="ridge_pi05.py output: serve the linear map instead of the action expert")
     p.add_argument("--noise_samples", type=int, default=0, help="Also draw this many unexecuted samples per query")
     p.add_argument("--samples_dir", default=None, help="With --noise_samples: where to save them, one file per episode")
     args = p.parse_args()
 
     policy = load_policy(args.checkpoint, args.config, args.device)
+    if args.linear:
+        assert not (args.record_dir or args.noise_samples), "--linear runs neither the expert nor its sampling"
+        policy = LinearPolicy(policy, args.linear)
     assert not (args.noise_samples and args.record_dir), "the extra samples would overwrite the recorded states"
     server = Server(policy, args.seed, Recorder(policy._model, args.record_dir) if args.record_dir else None,
                     args.noise_samples, args.samples_dir)

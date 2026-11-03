@@ -72,5 +72,6 @@ split/run_linear_followup.sh                     limits of depth and controls (�
 split/run_robustness.sh                          robustness under distribution shift (§13)
 split/bench_tee.py                               what fits in a CPU TEE (§14)
 split/pi05_check_state.py, run_pi05_baselines.sh π0.5: checks and baselines with recording (§15)
-split/ridge_pi05.py                              π0.5: linear map in place of the action expert (§15)
+split/ridge_pi05.py                              π0.5: choosing the linear map's input (§15)
+split/run_pi05_cv.sh, pi05_cv_summary.py         π0.5: 5-fold closed loop vs. same-scene π0.5 (§15)
 ```
