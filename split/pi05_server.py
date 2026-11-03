@@ -71,13 +71,16 @@ class Recorder:
 
 
 class Server:
-    def __init__(self, policy, seed, recorder):
+    def __init__(self, policy, seed, recorder, noise_samples=0, samples_dir=None):
         self.policy, self.seed, self.recorder = policy, seed, recorder
+        # Extra action samples per query with other noise, never executed: how much π0.5's own actions vary
+        self.noise_samples, self.samples_dir, self.samples = noise_samples, samples_dir, []
         self.num_queries = self.bytes_in = self.bytes_out = 0
         self.times = {"preprocess": [], "compute": []}
 
-    def noise(self, meta):
-        rng = np.random.default_rng([self.seed, meta["task_id"], meta["episode"], meta["query"]])
+    def noise(self, meta, sample=0):
+        key = [self.seed, meta["task_id"], meta["episode"], meta["query"]] + ([sample] if sample else [])
+        rng = np.random.default_rng(key)
         return rng.standard_normal((self.policy._model.config.action_horizon, self.policy._model.config.action_dim),
                                    dtype=np.float32)
 
@@ -111,6 +114,9 @@ class Server:
         self.num_queries += 1
         if self.recorder:
             self.recorder.add(actions)
+        if self.noise_samples:
+            extra = [self.policy.infer(element, noise=self.noise(meta, k))["actions"] for k in range(1, self.noise_samples + 1)]
+            self.samples.append(np.stack([actions, *np.asarray(extra, dtype=np.float64)]))
         return actions
 
     def handle(self, conn):
@@ -126,6 +132,10 @@ class Server:
             elif magic == MAGIC_END:
                 if self.recorder:
                     self.recorder.end_episode(meta)
+                if self.noise_samples:
+                    Path(self.samples_dir).mkdir(parents=True, exist_ok=True)
+                    np.save(Path(self.samples_dir) / f"{meta['episode_key']}.npy", np.stack(self.samples))
+                    self.samples = []
                 payload = b""
             else:
                 assert magic == MAGIC_QUERY, magic
@@ -150,10 +160,14 @@ def main():
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--seed", type=int, default=7, help="Base seed of the per-query noise")
     p.add_argument("--record_dir", default=None, help="Save the backbone states of every query, one file per episode")
+    p.add_argument("--noise_samples", type=int, default=0, help="Also draw this many unexecuted samples per query")
+    p.add_argument("--samples_dir", default=None, help="With --noise_samples: where to save them, one file per episode")
     args = p.parse_args()
 
     policy = load_policy(args.checkpoint, args.config, args.device)
-    server = Server(policy, args.seed, Recorder(policy._model, args.record_dir) if args.record_dir else None)
+    assert not (args.noise_samples and args.record_dir), "the extra samples would overwrite the recorded states"
+    server = Server(policy, args.seed, Recorder(policy._model, args.record_dir) if args.record_dir else None,
+                    args.noise_samples, args.samples_dir)
     if os.path.exists(args.socket):
         os.unlink(args.socket)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

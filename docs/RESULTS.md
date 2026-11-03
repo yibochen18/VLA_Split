@@ -2,7 +2,7 @@
 
 Running record of measured results for the OpenVLA-OFT split project.
 
-**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11). On a CPU, as in an edge TEE, one Llama layer takes 0.3–2 s per query, against ~400 ms per action chunk, so an edge TEE can hold a cut-A-sized readout but not transformer layers (§14).
+**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11). On a CPU, as in an edge TEE, one Llama layer takes 0.3–2 s per query, against ~400 ms per action chunk, so an edge TEE can hold a cut-A-sized readout but not transformer layers (§14). π0.5 (§15, in progress) reproduces at 96.9% vs. openpi's 96.85%; a ridge map from its backbone to its actions reaches about twice π0.5's own sample-to-sample action spread offline, closed-loop test next.
 
 ---
 
@@ -534,3 +534,51 @@ One query produces an 8-step action chunk, which lasts ~400 ms at LIBERO's 20 Hz
 - **Consequence for protection:** on an edge CPU TEE, Model 2 can only be a readout on top of Model 1's features, i.e. cut A or something of its size. §6 and §8 show such a readout is copied, or replaced by a linear map, from ~100 observed queries. Deeper cuts (§7, §10–§12) need transformer layers in the TEE, which do not fit there; they would need a GPU TEE (e.g. NVIDIA confidential computing), and a GPU TEE can hold the whole model without splitting it.
 
 Data: `$VLA_DATA/linear_compute/bench/tee_spatial.json`.
+
+---
+
+## 15. π0.5: reproduction and linear replacement of the action expert (in progress)
+
+Repeats the §8 study on π0.5 (`pi05_libero`, openpi), whose action module is a 300M-parameter transformer (the "action expert") that builds each action chunk over 10 flow-matching steps from random noise, attending to the backbone's keys and values at every layer.
+
+**Setup** (`split/pi05_server.py`, `split/run_pi05_eval.py`): openpi's PyTorch port, unmodified, in its own process and environment, run uncompiled. OFT's stock `run_episode` drives every episode (same env seed 0, wait steps, step limits, state and 180° image rotation); only the observation, the policy call and the action post-processing are π0.5's: images resized by openpi's own code on the server, the first 5 of 10 predicted actions executed, actions used as returned. Each query's noise comes from (seed 7, task, episode, query), so runs are reproducible from any starting episode.
+
+**Checks:**
+
+| Check | Result |
+|---|---|
+| Loads and answers | 3.6B params, 7.6 GB GPU, ~220 ms per query |
+| Robot state unused (`pi05_libero` sets `discrete_state_input=False`) | Other or zero state → bitwise identical actions; other image → different actions |
+| Determinism | Spatial, 1 episode per task, run twice in fresh processes: 236/236 queries bitwise identical, same successes |
+| Recording changes nothing | Bitwise identical with recording on |
+
+### Baseline (500 episodes per suite, seed 7)
+
+| Suite | Ours | openpi reported | Difference | OFT (ours, §1) |
+|---|---|---|---|---|
+| Spatial | **99.4%** (497/500) | 98.8% | +0.6 | 98.6% |
+| Object | **98.8%** (494/500) | 98.2% | +0.6 | 98.2% |
+| Goal | **98.0%** (490/500) | 98.0% | 0.0 | 97.6% |
+| Long | **91.4%** (457/500) | 92.4% | −1.0 | 93.8% |
+| **Average** | **96.9%** | 96.85% | +0.05 | 97.05% |
+
+All suites within ~1 pp of openpi's numbers, so the PyTorch port and our harness (env seed 0 instead of openpi's 7) reproduce π0.5. Long's weak spot is the same task as OFT's: "put both moka pots on the stove", 52% (OFT 72%), 24 of the 43 Long failures. These runs recorded every query's backbone states and actions (~4 MB per query; 27,976 queries on Long).
+
+### Choosing the linear map's input (Spatial, offline)
+
+`split/ridge_pi05.py`: closed-form ridge in dual form (queries × queries Gram matrix), standardized features, target = the 5 executed actions (35 numbers). λ chosen on starts 0–9 after fitting on 10–39, refit on 0–39, scored on held-out starts 40–49. Features = the 512 image tokens + the mean instruction token at one recorded layer, chosen before any closed-loop run by validation error (smaller input if within 5%).
+
+| Input | Features | λ | Validation L1 | Held-out L1 | Train L1 | Gripper agreement |
+|---|---|---|---|---|---|---|
+| Layer-18 input (what the expert reads), all tokens | 1,050,624 | 10⁴ | **0.0381** | **0.0357** | 0.0034 | 98.7% |
+| **Layer-18 input, 4 × 4 pooled** (chosen) | **67,584** | 10³ | 0.0388 | 0.0373 | 0.0133 | 98.7% |
+| Final layer output (unused by the expert), all tokens | 1,050,624 | 10⁵ | 0.0415 | 0.0394 | 0.0106 | 98.7% |
+| Always predict the mean action | | | | 0.198 | | |
+
+**π0.5's own spread:** π0.5 samples its actions, so a deterministic map cannot match them exactly. Drawing 4 extra (unexecuted) samples per query on Spatial (1 episode per task, 236 queries): one sample differs from the mean of the other four by L1 **0.017** and from another single sample by 0.020; gripper signs agree 98.9%.
+
+- The layer the action expert reads beats the final output, as at OFT's cut.
+- Pooling 4 × 4 costs < 5% of error with 16× fewer features (2.4M-parameter map); the full input nearly memorizes its training set.
+- The map's error is about twice π0.5's own sample spread; its gripper agreement is at π0.5's own level. Whether this suffices is the closed-loop test (next).
+
+Data: `$VLA_DATA/pi05/evals/` (runs), `$VLA_DATA/pi05/record/` (recordings, layer-18 input only after the choice), `$VLA_DATA/pi05/heads/features/` (fits).

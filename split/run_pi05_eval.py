@@ -43,15 +43,18 @@ def parse_args():
     p.add_argument("--tag", default="", help="Suffix for output file names")
     p.add_argument("--socket", default=None)
     p.add_argument("--record_dir", default=None, help="Server saves the backbone states of every query here")
+    p.add_argument("--noise_samples", type=int, default=0,
+                   help="Server also draws this many unexecuted samples per query (saved to <stem>_samples/)")
     p.add_argument("--save_actions", action="store_true", help="Save every query's 10 x 7 actions (<stem>_actions.npz)")
     p.add_argument("--compare_to", default=None, help="Another run's _actions.npz: check the actions are bitwise equal")
     return p.parse_args()
 
 
-def start_server(args, socket_path, log_path):
+def start_server(args, socket_path, log_path, samples_dir=None):
     """Launch pi05_server.py in openpi's environment and wait until it is listening."""
     cmd = f'source "{paths.REPO / "env.sh"}" && vla_openpi python "{SPLIT_DIR / "pi05_server.py"}" ' \
-          f'--socket "{socket_path}" --seed {args.noise_seed}' + (f' --record_dir "{args.record_dir}"' if args.record_dir else "")
+          f'--socket "{socket_path}" --seed {args.noise_seed}' + (f' --record_dir "{args.record_dir}"' if args.record_dir else "") \
+          + (f' --noise_samples {args.noise_samples} --samples_dir "{samples_dir}"' if args.noise_samples else "")
     log = open(log_path, "w")
     # Own process group: bash -> uv -> python, so stop_server can end all of them
     proc = subprocess.Popen(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
@@ -120,7 +123,7 @@ def main():
     cfg = rle.GenerateConfig(task_suite_name=args.suite, num_trials_per_task=args.episodes_per_task, seed=args.seed,
                              num_open_loop_steps=REPLAN_STEPS)
     set_seed_everywhere(cfg.seed)
-    server = start_server(args, socket_path, out_dir / f"{stem}_server.log")
+    server = start_server(args, socket_path, out_dir / f"{stem}_server.log", out_dir / f"{stem}_samples")
     try:
         main_loop(args, cfg, stem, out_dir, socket_path)
     finally:
