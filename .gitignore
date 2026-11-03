@@ -1,5 +1,6 @@
 # External repos, cloned separately (pinned commits in README.md)
 openvla-oft/
+openpi/
 LIBERO/
 
 # Model weights and large data (live on /mnt/ssd/yibo)
