@@ -2,7 +2,7 @@
 
 Splitting OpenVLA-OFT into two models that run in sequence: Model 1 (vision encoders + Llama 2 backbone) produces an intermediate representation, and Model 2 (the MLP action head) turns it into robot actions. Evaluated on the LIBERO simulation benchmark. The linear-replacement study is repeated on π0.5, whose action module is a flow-matching transformer rather than an MLP head.
 
-Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the 300M-parameter action expert with no significant loss overall (96.0% vs. 96.7%) and 73% faster queries.
+Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the 300M-parameter action expert with no significant loss overall (96.0% vs. 96.7%), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment.
 
 | Document | Contents |
 |---|---|
