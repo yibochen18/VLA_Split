@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # π0.5: 5-fold cross-validation of the linear map in place of the action expert (as run_linear_cv.sh), all suites,
 # in parallel with the same-scene π0.5 references (folds 1-4; fold 0 is the baseline run, which also starts at 0).
+# SUITES="libero_10" REFS=0 bash split/run_pi05_cv.sh   reruns only Long's linear folds
 source "$(dirname "$0")/../env.sh" && vla_activate
 ROOT=$VLA_DATA/pi05
+SUITES=${SUITES:-"libero_spatial libero_object libero_goal libero_10"}
 cd "$VLA_ROOT/openvla-oft"
 log() { echo "=== [$(date '+%F %T')] $* ==="; }
 
 linear_folds() {
-    for suite in libero_spatial libero_object libero_goal libero_10; do
+    for suite in $SUITES; do
         for f in 4 0 1 2 3; do
             v=$(( (f + 1) % 5 ))
             head="$ROOT/cv/heads/${suite}_fold$f"
@@ -25,7 +27,7 @@ linear_folds() {
 }
 
 references() {
-    for suite in libero_spatial libero_object libero_goal libero_10; do
+    for suite in $SUITES; do
         for f in 1 2 3 4; do
             log "pi05 reference $suite fold $f"
             python ../split/run_pi05_eval.py --suite $suite --first_episode $((10 * f)) --episodes_per_task 10 \
@@ -36,7 +38,7 @@ references() {
     log "REFERENCES DONE"
 }
 
-linear_folds > "$VLA_LOGS/pi05_cv_linear.log" 2>&1 &
-references > "$VLA_LOGS/pi05_cv_refs.log" 2>&1 &
+linear_folds > "$VLA_LOGS/pi05_cv_linear${SUITES// /_}.log" 2>&1 &
+[ "${REFS:-1}" = 1 ] && references > "$VLA_LOGS/pi05_cv_refs.log" 2>&1 &
 wait
 log "ALL DONE"

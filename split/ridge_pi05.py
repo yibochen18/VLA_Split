@@ -55,9 +55,11 @@ def load(record_dir, layer, pool, keep):
 
 
 class DualRidge:
-    """Ridge on standardized features, solved through the eigendecomposition of the n x n Gram matrix."""
+    """Ridge on standardized features, solved through the eigendecomposition of the n x n Gram matrix.
+    Feature blocks are multiplied on the GPU; the n x n matrices and their eigendecomposition stay in CPU memory
+    (Long has ~22k training queries: 3.9 GB per matrix in float64, too much next to a π0.5 server)."""
 
-    def __init__(self, x, y, device, chunk=32768, others=()):
+    def __init__(self, x, y, device, chunk=8192, others=()):
         self.device, self.chunk = device, chunk
         n, d = x.shape
         s = torch.zeros(d, dtype=torch.float64, device=device)
@@ -70,16 +72,17 @@ class DualRidge:
         self.mu = (s / n).float()
         self.sd = (ss / n - (s / n) ** 2).clamp_min(1e-12).sqrt().float().clamp_min(1e-6)
         self.y_mean = y.mean(0)
-        self.yc = (y - self.y_mean).to(device)
+        self.yc = y - self.y_mean
         # Gram matrix of the training queries, and cross-Gram matrices of any other sets (validation / test)
-        self.gram = torch.zeros(n, n, dtype=torch.float64, device=device)
-        self.cross = [torch.zeros(len(o), n, dtype=torch.float64, device=device) for o in others]
+        self.gram = torch.zeros(n, n, dtype=torch.float64)
+        self.cross = [torch.zeros(len(o), n, dtype=torch.float64) for o in others]
         for j in range(0, d, chunk):
             c = self._std(x, j)
-            self.gram += (c @ c.T).double()
+            self.gram += (c @ c.T).double().cpu()
             for k, o in enumerate(others):
-                self.cross[k] += (self._std(o, j) @ c.T).double()
+                self.cross[k] += (self._std(o, j) @ c.T).double().cpu()
         self.evals, self.evecs = torch.linalg.eigh(self.gram)
+        del self.gram
         self.proj = self.evecs.T @ self.yc
 
     def _std(self, x, j):
@@ -90,11 +93,11 @@ class DualRidge:
         return self.evecs @ (self.proj / (self.evals + lam)[:, None])
 
     def predict_other(self, k, lam):
-        return (self.cross[k] @ self.alpha(lam)).cpu() + self.y_mean
+        return self.cross[k] @ self.alpha(lam) + self.y_mean
 
     def weights(self, x, lam):
         """Weights and bias in the ORIGINAL feature space: y = x @ w + b."""
-        a = self.alpha(lam).float()
+        a = self.alpha(lam).float().to(self.device)
         w = torch.empty(x.shape[1], a.shape[1])
         for j in range(0, x.shape[1], self.chunk):
             sl = slice(j, j + self.chunk)
