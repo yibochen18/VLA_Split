@@ -2,7 +2,9 @@
 
 Running record of measured results for the OpenVLA-OFT split project.
 
-**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11). On a CPU, as in an edge TEE, one Llama layer takes 0.3–2 s per query, against ~400 ms per action chunk, so an edge TEE can hold a cut-A-sized readout but not transformer layers (§14). π0.5 (§15) reproduces at 96.9% vs. openpi's 96.85%, and one linear map replaces its 300M-parameter action expert with no significant loss overall (96.0% vs. 96.7% on identical scenes, 2,000 episodes; Object −2.2 pp), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment.
+**Status (2026-11-02):** Baseline reproduced on all four suites (97.05% vs. 97.1%). Cut A split verified bitwise on all four suites, and full 500-episode split runs match the unsplit model exactly on every suite. Extraction tests (§6, §7): Model 2 can be copied from ~100 observed queries, even with up to 4 Llama layers moved into it. Linear-head study (§8): a single linear map distilled from observed traffic replaces Model 2 with no measurable loss in task success (97.15% vs. 96.85% for the MLP on identical scenes, 2,000 episodes), and is as robust as the real model under camera, lighting, noise and object-position shifts (§13). LIBERO's scenes depend on episode order (§9), so every comparison uses a real-model run done the same way. Depth (§10–§12): a linear map reading Llama layer 24 replaces the top 8 layers plus the head with small loss on all four suites (~15% faster); layer 20 (23% faster, 32% less memory) holds on Spatial but loses ~2–10 points on the other suites and is clearly less robust to camera and object shifts (§13). A small MLP readout recovers layers 12–16, so the fall-off there is the linear map's limit; at layers 4–8 the information is not yet there. Observation needed: ~100 queries for the head alone, ~2,500 for layer 20 on Spatial (§11). On a CPU, as in an edge TEE, one Llama layer takes 0.3–2 s per query, against ~400 ms per action chunk, so an edge TEE can hold a cut-A-sized readout but not transformer layers (§14). π0.5 (§15) reproduces at 96.9% vs. openpi's 96.85%, and one linear map replaces its ≈430M-parameter action expert with no significant loss overall (96.0% vs. 96.7% on identical scenes, 2,000 episodes; Object −2.2 pp), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment. A small MLP readout does about as well as the linear map there (−1.1 pp vs. π0.5).
+
+**Update (2026-11-12, LIBERO-Plus, §16):** on 10,030 perturbed LIBERO tasks (camera, robot start, language, light, background, sensor noise, object layout), with readouts fitted on clean LIBERO only. **OFT:** the linear map stays within ~1 pp of the real head (−1.1 pp, 10,030 paired tasks; at most −3.4 pp under any shift). **π0.5:** the readouts fall well behind the real expert (linear −14.8 pp, MLP −9.7 pp; camera −26 / −21, sensor noise −21 / −18), so π0.5's expert adds robustness that a readout of the pooled layer-18 input fitted on clean traffic does not reproduce, unlike OFT's head.
 
 ---
 
@@ -539,7 +541,7 @@ Data: `$VLA_DATA/linear_compute/bench/tee_spatial.json`.
 
 ## 15. π0.5: reproduction and linear replacement of the action expert
 
-Repeats the §8 study on π0.5 (`pi05_libero`, openpi), whose action module is a 300M-parameter transformer (the "action expert") that builds each action chunk over 10 flow-matching steps from random noise, attending to the backbone's keys and values at every layer.
+Repeats the §8 study on π0.5 (`pi05_libero`, openpi), whose action module is a ≈430M-parameter transformer (the "action expert": 311M in its transformer layers, 117M in the time conditioning (adaptive norms), 2M in the action projections; counted from the checkpoint, earlier written here as "300M") that builds each action chunk over 10 flow-matching steps from random noise, attending to the backbone's keys and values at every layer.
 
 **Setup** (`split/pi05_server.py`, `split/run_pi05_eval.py`): openpi's PyTorch port, unmodified, in its own process and environment, run uncompiled. OFT's stock `run_episode` drives every episode (same env seed 0, wait steps, step limits, state and 180° image rotation); only the observation, the policy call and the action post-processing are π0.5's: images resized by openpi's own code on the server, the first 5 of 10 predicted actions executed, actions used as returned. Each query's noise comes from (seed 7, task, episode, query), so runs are reproducible from any starting episode.
 
@@ -607,8 +609,104 @@ Object's loss is mostly two tasks: chocolate pudding (45 vs 50 of 50) and alphab
 
 **Speed:** 59 ms per query alone (70 ms averaged over the CV runs, with a π0.5 server sharing the GPU) vs. 219 ms for π0.5: the map skips the last backbone layer and the expert's 10 denoising passes. Both measured in uncompiled PyTorch (compilation was turned off for run-to-run equality); the expert's 10 steps are many small operations, so much of its time may be per-operation overhead that compilation removes, and the saving may be smaller in a compiled deployment. Map: 2.4M parameters (67,584 × 35); π0.5: 3.6B.
 
-**Takeaway:** one linear map, fitted in closed form from ~8,500–22,700 observed queries, (400 episodes per suite: 40 starts × 10 tasks, ~35 min (Spatial) to ~1.5 h (Long) of robot time at 20 Hz, the same episodes as OFT's §8 fits) replaces π0.5's 300M-parameter flow-matching action expert with no significant loss overall (−0.8 pp, CI [−1.8, +0.3], 2,000 paired episodes) and a faster query (73% faster in uncompiled PyTorch; may be smaller in a compiled deployment), the same picture as OFT's MLP head (§8, +0.3 pp). The exception is Object, a small but significant loss (−2.2 pp). Caveats: one seed; LIBERO only; how few queries suffice is not measured for π0.5 (OFT: ~100 for the head, §11); the expert's sampling is replaced by a deterministic map (π0.5's own samples differ by L1 ≈ 0.02, the map's error is ≈ 0.03–0.04).
+**Takeaway:** one linear map, fitted in closed form from ~8,500–22,700 observed queries, (400 episodes per suite: 40 starts × 10 tasks, ~35 min (Spatial) to ~1.5 h (Long) of robot time at 20 Hz, the same episodes as OFT's §8 fits) replaces π0.5's ≈430M-parameter flow-matching action expert with no significant loss overall (−0.8 pp, CI [−1.8, +0.3], 2,000 paired episodes) and a faster query (73% faster in uncompiled PyTorch; may be smaller in a compiled deployment), the same picture as OFT's MLP head (§8, +0.3 pp). The exception is Object, a small but significant loss (−2.2 pp). Caveats: one seed; LIBERO only; how few queries suffice is not measured for π0.5 (OFT: ~100 for the head, §11); the expert's sampling is replaced by a deterministic map (π0.5's own samples differ by L1 ≈ 0.02, the map's error is ≈ 0.03–0.04).
 
 **Run note:** Long's fits first ran out of GPU memory (22k × 22k matrices next to a π0.5 server); `ridge_pi05.py` now keeps those matrices in CPU memory (same Spatial fit: held-out L1 0.0373, weights within 4e-6), and only Long's linear folds were rerun.
 
 Data: `$VLA_DATA/pi05/evals/` (runs), `$VLA_DATA/pi05/record/` (recordings, layer-18 input only after the choice), `$VLA_DATA/pi05/heads/features/` (input choice), `$VLA_DATA/pi05/cv/` (fold heads, closed-loop runs, `summary.json`).
+
+### A small MLP in place of the action expert (5-fold, all suites)
+
+`split/mlp_pi05.py`, `split/run_pi05_mlp_cv.sh`, `split/pi05_cv_summary.py mlp` (2026-11-06 to 11-08). Same input (layer-18 input, 4 × 4 pooled, 67,584 features), same folds, same targets and the same closed-loop protocol as the linear map above; only the map changes: per-feature standardization (training-set mean and spread, as the linear map) → 512 hidden units → ReLU → 35 outputs, 34.6M parameters. Trained with AdamW (lr 3e-4, weight decay 0.01, batch 64, cosine schedule), L1 loss on standardized targets; the number of steps is chosen on the validation starts from {3k, 6k, 12k, 24k, 48k} (as λ for the linear map), then the MLP is retrained on train + validation. Served by `pi05_server.py --mlp` on the same path as the linear map; online actions equal the offline predictions.
+
+| Suite | MLP | π0.5 (same scenes) | MLP − π0.5 [95% CI], McNemar p | Linear − π0.5 (above) | Held-out L1: MLP / linear |
+|---|---|---|---|---|---|
+| Spatial | 498/500 | 492/500 | +1.2 [+0.1, +2.3], 0.07 | −0.6 | 0.032 / 0.037 |
+| Object | 479/500 | 494/500 | −3.0 [−5.0, −1.0], 0.01 | −2.2 | 0.026 / 0.030 |
+| Goal | 492/500 | 489/500 | +0.6 [−1.1, +2.3], 0.65 | +0.2 | 0.031 / 0.037 |
+| Long | 443/500 | 459/500 | −3.2 [−6.2, −0.2], 0.05 | −0.4 | 0.025 / 0.031 |
+| **All** | **1912/2000 (95.6%)** | 1934/2000 (96.7%) | **−1.1 [−2.1, −0.1], 0.05** | −0.8 | |
+
+- **On clean LIBERO the MLP is no better than the linear map** (MLP − linear on the same episodes −0.4 pp [−1.4, +0.7], p = 0.59), although its held-out action error is ~17% lower: the linear map is already at π0.5's level there, and Object's small loss stays.
+- **First recipe, superseded:** the first MLP used per-sample LayerNorm on its input (copied from §12, where it worked for OFT) and lost 7.8 pp to π0.5 (1779/2000; Long −23 pp). Not a serving bug, not leakage (same splits as the linear map), not gripper flicker. Cause: on π0.5's layer-18 input most of each feature is a fixed offset and the per-sample LayerNorm scale varies 70–200 across inputs, so every feature is rescaled by an input-dependent factor; the offline error was still lower than the linear map's, but closed loop it failed once the robot drifted off π0.5's trajectories. Switching to per-feature standardization fixed it (Long fold 0: 71 → 91 of 100; with dropout 0.2 and weight decay 0.1: 88). Data: `$VLA_DATA/pi05/mlp_cv/` (LayerNorm), `$VLA_DATA/pi05/mlp_variants/`.
+
+Data: `$VLA_DATA/pi05/mlp_cv_std/` (fold heads, closed-loop runs, `summary.json`); pooled features cached at `$VLA_DATA/pi05/features/pool4/`.
+
+---
+
+## 16. LIBERO-Plus: do the readouts hold up off-distribution?
+
+**Status:** complete (2026-11-06 to 11-12): all 10,030 tasks × 5 setups, 50,150 episodes, no failed jobs.
+
+**Question:** the readouts above were fitted and tested on clean LIBERO, a narrow benchmark. Do they only work because test scenes look like training scenes? LIBERO-Plus (arXiv 2510.13626, code at commit 4976dc3) perturbs the four LIBERO suites in seven ways: camera viewpoint, robot initial state, language (rewritten instructions), light, background texture, sensor noise (blur, noise and other image corruptions) and object layout; 10,030 tasks, one episode each, starting from LIBERO's initial state 0.
+
+**Setups** (`split/run_liberoplus.py`):
+- `oft_real`, `pi05_real`: the LIBERO models as before (OFT per-suite checkpoints with their MLP heads through the cut-A split; `pi05_libero`). **Not retrained on LIBERO-Plus**, as on the LIBERO-Plus leaderboard.
+- `oft_linear` (§8), `pi05_linear` (§15), `pi05_mlp` (§15, standardized MLP): the **fold-0 readouts fitted on clean LIBERO**. Fold 0 held out starts 0–9, so no readout saw start 0. Not refitted on LIBERO-Plus traffic: the question is whether a map fitted on normal operation holds up when conditions change.
+
+**Pairing:** every task builds a fresh environment and runs one episode, so each readout and its real model see identical scenes (no §9 order effect). Checked per episode by the first camera image's MD5: identical in all 10,030 pairs except 20 (OFT linear, π0.5 MLP) and 28 (π0.5 linear), all Light tasks. Some LIBERO-Plus Light tasks render differently from run to run even alone on one GPU, so this is LIBERO-Plus's own nondeterminism, not our pairing. At most two simulators render per GPU: with up to seven, MuJoCo's offscreen rendering failed and camera images changed (tried and rejected 2026-11-07). Instructions identical on both sides of every pair (checked).
+
+**Instructions** (`--plus_prompt`, `split/liberoplus_prompts.py`): LIBERO-Plus builds each task's instruction from its file name, so non-language variants get tags such as "… view 0 0 100 0 0 initstate 196" appended (LIBERO-Plus issues #64, #65, #71). We send the base task's original LIBERO instruction; language variants keep LIBERO-Plus's rewritten instruction. Consequence: our real-model numbers are higher than the leaderboard's (below) and not directly comparable to it.
+
+### Success per suite (paired; difference in pp [95% CI], McNemar p)
+
+| Suite | Tasks | OFT | OFT linear − OFT | π0.5 | π0.5 linear − π0.5 | π0.5 MLP − π0.5 |
+|---|---|---|---|---|---|---|
+| Spatial | 2,402 | 86.8% | −0.0 [−0.9, +0.9], 1.00 | 92.7% | −3.6 [−4.9, −2.3], <0.001 | −2.4 [−3.6, −1.2], <0.001 |
+| Object | 2,518 | 69.9% | −1.2 [−2.2, −0.1], 0.04 | 91.3% | −17.3 [−18.9, −15.6], <0.001 | −13.6 [−15.2, −12.0], <0.001 |
+| Goal | 2,591 | 71.6% | −1.3 [−2.3, −0.2], 0.02 | 81.5% | −18.7 [−20.5, −16.9], <0.001 | −9.3 [−10.9, −7.8], <0.001 |
+| Long | 2,519 | 67.9% | −2.0 [−3.4, −0.6], 0.01 | 79.3% | −19.2 [−21.1, −17.3], <0.001 | −13.1 [−14.8, −11.3], <0.001 |
+| **All** | **10,030** | **73.9%** | **−1.1 [−1.7, −0.6], <0.001** | **86.1%** | **−14.8 [−15.7, −14.0], <0.001** | **−9.7 [−10.5, −8.9], <0.001** |
+
+### Per shift (all four suites)
+
+| Shift | Tasks | OFT | OFT linear | π0.5 | π0.5 linear | π0.5 MLP |
+|---|---|---|---|---|---|---|
+| Camera | 1,599 | 64.4 | 63.6 | 76.5 | 51.0 | 55.6 |
+| Robot initial state | 1,550 | 35.0 | 35.0 | 77.9 | 62.4 | 68.8 |
+| Language | 1,537 | 83.3 | 81.5 | 86.3 | 73.9 | 81.2 |
+| Light | 1,142 | 94.0 | 94.0 | 96.8 | 85.3 | 94.4 |
+| Background | 1,076 | 95.1 | 94.2 | 96.2 | 88.0 | 90.4 |
+| Sensor noise | 1,601 | 79.6 | 76.2 | 89.2 | 67.8 | 71.5 |
+| Object layout | 1,525 | 77.9 | 77.4 | 85.8 | 80.1 | 83.0 |
+| **All** | **10,030** | **73.9** | **72.8** | **86.1** | **71.2** | **76.4** |
+
+| Shift | OFT linear − OFT | π0.5 linear − π0.5 | π0.5 MLP − π0.5 | π0.5 MLP − linear |
+|---|---|---|---|---|
+| Camera | −0.8 [−2.6, +0.9], 0.40 | −25.5 [−28.1, −23.0] | −20.9 [−23.3, −18.5] | +4.6 [+2.5, +6.7] |
+| Robot initial state | +0.0 [−1.4, +1.4], 1.00 | −15.5 [−18.0, −13.1] | −9.2 [−11.4, −6.9] | +6.4 [+4.3, +8.5] |
+| Language | −1.8 [−3.1, −0.5], 0.01 | −12.4 [−14.4, −10.5] | −5.1 [−6.8, −3.5] | +7.3 [+5.4, +9.2] |
+| Light | +0.0 [−1.5, +1.5], 1.00 | −11.5 [−13.7, −9.2] | −2.4 [−3.9, −0.8], 0.003 | +9.1 [+6.9, +11.3] |
+| Background | −0.8 [−2.3, +0.6], 0.31 | −8.2 [−10.2, −6.1] | −5.8 [−7.7, −3.8] | +2.4 [+0.3, +4.6], 0.03 |
+| Sensor noise | −3.4 [−5.0, −1.9], <0.001 | −21.4 [−23.7, −19.2] | −17.7 [−19.9, −15.5] | +3.7 [+1.8, +5.7] |
+| Object layout | −0.5 [−1.7, +0.6], 0.44 | −5.7 [−7.4, −4.0] | −2.9 [−4.4, −1.4] | +2.8 [+1.3, +4.4] |
+| **All** | **−1.1 [−1.7, −0.6], <0.001** | **−14.8 [−15.7, −14.0]** | **−9.7 [−10.5, −8.9]** | **+5.2 [+4.4, +5.9]** |
+
+π0.5 p-values not shown are < 0.001. Per suite and shift, readout − real (OFT linear / π0.5 linear / π0.5 MLP):
+
+| Shift | Spatial | Object | Goal | Long |
+|---|---|---|---|---|
+| Camera | −2.7 / −2.9 / −1.1 | −1.0 / **−41.9 / −35.1** | +1.7 / **−29.7 / −25.0** | −1.4 / **−26.3 / −21.2** |
+| Robot initial state | +0.3 / −6.9 / −2.0 | −1.0 / −17.8 / −13.8 | +0.2 / −15.9 / −6.8 | +0.5 / −20.6 / −13.2 |
+| Language | +1.0 / −2.1 / −1.8 | −2.3 / −5.6 / −5.1 | +0.2 / −23.2 / −3.2 | −6.5 / −17.8 / −10.7 |
+| Light | +0.0 / +0.0 / −1.0 | +1.3 / −17.8 / −1.0 | −1.4 / −13.3 / +2.2 | +0.0 / −15.0 / −9.9 |
+| Background | +1.2 / −1.6 / −0.4 | +0.4 / −6.5 / −4.8 | −4.3 / −13.9 / −7.1 | −0.3 / −10.0 / −10.0 |
+| Sensor noise | +1.7 / −10.8 / −10.5 | −5.0 / −20.9 / −24.4 | −5.3 / −26.4 / −18.2 | −4.5 / −26.1 / −16.5 |
+| Object layout | −1.3 / −0.3 / +0.5 | +0.7 / −5.2 / −3.2 | −1.4 / −6.6 / −3.8 | +0.0 / −11.9 / −5.4 |
+
+### Comparison with the leaderboard
+
+The LIBERO-Plus README reports OpenVLA-OFT (same per-suite checkpoints) at 69.6% overall (camera 56.4, robot 31.9, language 79.5, light 88.7, background 93.3, noise 75.8, layout 74.2). Ours is 73.9% (camera 64.4, robot 35.0, language 83.3, light 94.0, background 95.1, noise 79.6, layout 77.9): the same pattern (robot initial state by far the hardest, background and light easiest) and a few points higher in every category, as expected from sending clean instructions instead of tagged ones (issue #65 measured −8 pp for π0.5 on Object camera tasks from the tags). π0.5 is not on the leaderboard.
+
+### Takeaways
+
+- **OFT: the linear map holds up off-distribution.** A 200K-parameter map fitted on clean LIBERO stays within ~1 pp of OFT's 151M-parameter head over 10,030 perturbed tasks (−1.1 pp); the largest loss under any shift is sensor noise (−3.4 pp), and on Long's language variants (−6.5 pp). This extends §13 (four hand-made shifts, 100 episodes each) to LIBERO-Plus's seven kinds and all suites. OFT's head adds little that a linear readout of its cut-A input lacks, in or out of distribution.
+- **π0.5: the readouts do not.** On clean LIBERO the linear map and the MLP were within ~1 pp of π0.5's expert; under LIBERO-Plus shifts they lose 14.8 and 9.7 pp, up to −42 pp (Object camera). π0.5 itself is much more robust than OFT here (86.1% vs. 73.9%; robot initial state 78% vs. 35%), and the readouts lose most of that advantage: π0.5 linear (71.2%) is below OFT. So the expert contributes robustness that a readout of the pooled layer-18 input, fitted on clean traffic, does not reproduce, unlike OFT's head.
+- **The MLP recovers part of the gap** (+5.2 pp over linear; most of Light and Language, about half of Robot), but little of camera or sensor noise.
+- **Open question: why.** π0.5's readouts see less than the expert: one layer, 4 × 4 pooled (the expert reads every layer's keys and values at full resolution over 10 denoising steps). Pooling was chosen on clean validation error (full tokens were only 1.8% better there), which says nothing about robustness. Next: a readout of the full-resolution layer-18 input on the worst cases (Object camera and sensor noise), to separate lost spatial detail from what the expert itself computes.
+
+**Caveats:** one episode per task, one seed; readouts are a single fit (fold 0); real-model numbers use clean instructions (not comparable to the leaderboard one-to-one).
+
+**Run cost:** ~3 days on two shared RTX 4090s (GPU 0 from 2026-11-09): one π0.5 job needs ~8 GB, one OFT job ~16 GB, at most two simulators rendering per GPU. Sensor-noise chunks ran 3–6× slower than others (image corruption on the CPU per frame).
+
+Data: `$VLA_DATA/libero_plus/evals/<setup>/<suite>/` (one JSON per 250-task chunk, with per-episode success, first-image MD5 and instruction), `$VLA_DATA/libero_plus/summary.json` (`split/liberoplus_summary.py`).
