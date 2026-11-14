@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument("--socket", default=None)
     p.add_argument("--record_dir", default=None, help="Server saves the backbone states of every query here")
     p.add_argument("--linear", default=None, help="Serve this ridge_pi05.py linear map in place of the action expert")
+    p.add_argument("--mlp", default=None, help="Serve this mlp_pi05.py MLP in place of the action expert")
     p.add_argument("--noise_samples", type=int, default=0,
                    help="Server also draws this many unexecuted samples per query (saved to <stem>_samples/)")
     p.add_argument("--save_actions", action="store_true", help="Save every query's 10 x 7 actions (<stem>_actions.npz)")
@@ -56,7 +57,7 @@ def start_server(args, socket_path, log_path, samples_dir=None):
     cmd = f'source "{paths.REPO / "env.sh"}" && vla_openpi python "{SPLIT_DIR / "pi05_server.py"}" ' \
           f'--socket "{socket_path}" --seed {args.noise_seed}' + (f' --record_dir "{args.record_dir}"' if args.record_dir else "") \
           + (f' --noise_samples {args.noise_samples} --samples_dir "{samples_dir}"' if args.noise_samples else "") \
-          + (f' --linear "{args.linear}"' if args.linear else "")
+          + (f' --linear "{args.linear}"' if args.linear else "") + (f' --mlp "{args.mlp}"' if args.mlp else "")
     log = open(log_path, "w")
     # Own process group: bash -> uv -> python, so stop_server can end all of them
     proc = subprocess.Popen(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
@@ -197,7 +198,8 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
     timed = queries[1:]  # first query excluded (warmup)
     summary = {
         "suite": args.suite,
-        "policy": "pi05_libero (openpi PyTorch, uncompiled)" + (f" with linear map {args.linear}" if args.linear else ""),
+        "policy": "pi05_libero (openpi PyTorch, uncompiled)" + (f" with linear map {args.linear}" if args.linear else "")
+                  + (f" with MLP {args.mlp}" if args.mlp else ""),
         "first_episode": args.first_episode,
         "seed": args.seed,
         "noise_seed": args.noise_seed,

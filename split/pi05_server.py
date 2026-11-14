@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pi05_protocol import ACTION_SHAPE, MAGIC_END, MAGIC_QUERY, MAGIC_STATS, actions_to_bytes, encode_response, read_request  # noqa: E402
 from ridge_pi05 import STEPS, features  # noqa: E402
+from mlp_pi05 import MLPMap  # noqa: E402
 
 RESIZE = 224  # openpi's LIBERO client resize
 ACTION_DIM = 7
@@ -78,19 +79,28 @@ class _Stop(Exception):
     pass
 
 
-class LinearPolicy:
-    """π0.5 with its action expert replaced by a linear map (ridge_pi05.py): same input transforms and backbone,
-    stopped at the input of the last backbone layer (what the expert reads); layer 18 and the expert never run.
-    Returns the map's 5 actions; rows 6-10 of the 10 x 7 reply are NaN (never executed)."""
+class ReadoutPolicy:
+    """π0.5 with its action expert replaced by a readout fitted on recorded traffic: a linear map (ridge_pi05.py) or a
+    small MLP (mlp_pi05.py). Same input transforms and backbone, stopped at the input of the last backbone layer (what
+    the expert reads); layer 18 and the expert never run.
+    Returns the readout's 5 actions; rows 6-10 of the 10 x 7 reply are NaN (never executed)."""
 
-    def __init__(self, policy, head_dir):
+    def __init__(self, policy, head_dir, kind):
         config = json.loads((Path(head_dir) / "config.json").read_text())
-        assert config["kind"] == "pi05_linear" and config["layer"] == "layer18_in", config
-        head = torch.load(Path(head_dir) / "linear.pt")
+        assert config["kind"] == kind and config["layer"] == "layer18_in", config
         self.policy, self.model, self.pool = policy, policy._model, config["pool"]
         self.device = policy._pytorch_device
-        self.weight, self.bias = head["weight"].T.to(self.device), head["bias"].to(self.device)
-        self.params = self.weight.numel() + self.bias.numel()
+        if kind == "pi05_linear":
+            head = torch.load(Path(head_dir) / "linear.pt")
+            weight, bias = head["weight"].T.to(self.device), head["bias"].to(self.device)
+            self.readout = lambda f: f.float() @ weight + bias
+            self.params = weight.numel() + bias.numel()
+        else:
+            mlp = MLPMap.from_config(config)
+            mlp.load_state_dict(torch.load(Path(head_dir) / "mlp.pt", map_location="cpu"))
+            mlp = mlp.to(self.device).eval()
+            self.readout = mlp
+            self.params = sum(p.numel() for p in mlp.parameters())
         self._model = self.model  # for Server.stats
         self.captured = None
         lm = self.model.paligemma_with_expert.paligemma.language_model
@@ -115,7 +125,7 @@ class LinearPolicy:
         except _Stop:
             pass
         states = self.captured[0][pad_masks[0]].to(torch.bfloat16)[None]
-        y = features(states, self.pool).float() @ self.weight + self.bias
+        y = self.readout(features(states, self.pool))
         actions = np.full(ACTION_SHAPE, np.nan)
         actions[:STEPS] = y.reshape(STEPS, -1).double().cpu().numpy()
         return {"actions": actions}
@@ -143,7 +153,7 @@ class Server:
             "bytes_out": self.bytes_out,
             "mean_ms": {k: 1e3 * sum(v) / len(v) for k, v in self.times.items() if v},
             "params": sum(p.numel() for p in model.parameters()),
-            "linear_map_params": getattr(self.policy, "params", None),
+            "readout_params": getattr(self.policy, "params", None),
             "action_expert_params": sum(p.numel() for p in model.paligemma_with_expert.gemma_expert.parameters()),
             "cuda_max_memory_allocated": torch.cuda.max_memory_allocated(),
             "pid": os.getpid(),
@@ -213,14 +223,16 @@ def main():
     p.add_argument("--seed", type=int, default=7, help="Base seed of the per-query noise")
     p.add_argument("--record_dir", default=None, help="Save the backbone states of every query, one file per episode")
     p.add_argument("--linear", default=None, help="ridge_pi05.py output: serve the linear map instead of the action expert")
+    p.add_argument("--mlp", default=None, help="mlp_pi05.py output: serve the MLP instead of the action expert")
     p.add_argument("--noise_samples", type=int, default=0, help="Also draw this many unexecuted samples per query")
     p.add_argument("--samples_dir", default=None, help="With --noise_samples: where to save them, one file per episode")
     args = p.parse_args()
 
     policy = load_policy(args.checkpoint, args.config, args.device)
-    if args.linear:
-        assert not (args.record_dir or args.noise_samples), "--linear runs neither the expert nor its sampling"
-        policy = LinearPolicy(policy, args.linear)
+    assert not (args.linear and args.mlp), "serve one readout"
+    if args.linear or args.mlp:
+        assert not (args.record_dir or args.noise_samples), "a readout runs neither the expert nor its sampling"
+        policy = ReadoutPolicy(policy, args.linear or args.mlp, "pi05_linear" if args.linear else "pi05_mlp")
     assert not (args.noise_samples and args.record_dir), "the extra samples would overwrite the recorded states"
     server = Server(policy, args.seed, Recorder(policy._model, args.record_dir) if args.record_dir else None,
                     args.noise_samples, args.samples_dir)

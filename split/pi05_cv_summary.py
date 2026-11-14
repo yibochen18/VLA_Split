@@ -1,8 +1,11 @@
-"""π0.5 cross-validation summary: linear map vs. π0.5 on identical scenes, paired per episode (as RESULTS.md §8).
+"""π0.5 cross-validation summary: a readout (linear map or MLP) vs. π0.5 on identical scenes, paired per episode
+(as RESULTS.md §8).
 
-Fold f: the linear map run from start 10f (run_pi05_cv.sh) against π0.5 run the same way (fold 0: the baseline run,
-which also starts at 0). Exact McNemar test on episodes where exactly one fails; 95% CI of the difference from a normal
-approximation on the paired differences. Writes $VLA_DATA/pi05/cv/summary.json.
+Fold f: the readout run from start 10f (run_pi05_cv.sh / run_pi05_mlp_cv.sh) against π0.5 run the same way (fold 0:
+the baseline run, which also starts at 0). Exact McNemar test on episodes where exactly one fails; 95% CI of the
+difference from a normal approximation on the paired differences.
+    python pi05_cv_summary.py            linear map -> $VLA_DATA/pi05/cv/summary.json
+    python pi05_cv_summary.py mlp [dir]  MLP        -> $VLA_DATA/pi05/mlp_cv_std/summary.json
 """
 
 import json
@@ -45,21 +48,25 @@ def paired(lin, ref):
 
 
 def main():
-    rows, all_lin, all_ref, l1 = [], {}, {}, {}
+    kind = sys.argv[1] if len(sys.argv) > 1 else "linear"
+    assert kind in ("linear", "mlp"), kind
+    cv = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / ("cv" if kind == "linear" else "mlp_cv_std")
+    rows, all_lin, all_ref = [], {}, {}
     for suite, label in SUITES:
         lin, ref, folds = {}, {}, []
         for f in range(5):
-            lp = ROOT / f"cv/evals/{suite}/pi05_eval_seed7_10ep_from{10 * f}_linear_fold{f}.json" if f else \
-                ROOT / f"cv/evals/{suite}/pi05_eval_seed7_10ep_linear_fold0.json"
+            lp = cv / f"evals/{suite}/pi05_eval_seed7_10ep_from{10 * f}_{kind}_fold{f}.json" if f else \
+                cv / f"evals/{suite}/pi05_eval_seed7_10ep_{kind}_fold0.json"
             rp = ROOT / f"cv/evals/{suite}/pi05_eval_seed7_10ep_from{10 * f}_ref_fold{f}.json" if f else \
                 ROOT / f"evals/{suite}/pi05_eval_seed7_50ep.json"
             if not (lp.exists() and rp.exists()):
                 continue
             l_s = load(lp)["successes"]
             r_s = {k: v for k, v in load(rp)["successes"].items() if 10 * f <= int(k.split("_ep")[1]) < 10 * f + 10}
-            head = load(ROOT / f"cv/heads/{suite}_fold{f}/config.json")
+            head = load(cv / f"heads/{suite}_fold{f}/config.json")
             folds.append({"fold": f, "linear": sum(l_s.values()), "pi05": sum(r_s.values()),
-                          "test_l1": head["metrics"]["test"]["l1_mean"], "lambda": head["lambda"],
+                          "test_l1": head["metrics"]["test"]["l1_mean"],
+                          "lambda" if kind == "linear" else "steps": head["lambda" if kind == "linear" else "steps"],
                           "train_queries": head["num_train_queries"]})
             lin.update({f"{suite}/{k}": v for k, v in l_s.items()})
             ref.update({f"{suite}/{k}": v for k, v in r_s.items()})
@@ -71,12 +78,14 @@ def main():
         all_ref.update(ref)
     if all_lin:
         rows.append({"suite": "All", **paired(all_lin, all_ref)})
-    out = ROOT / "cv/summary.json"
+    for r in rows:  # fields say "linear" for either readout
+        r["readout"] = kind
+    out = cv / "summary.json"
     out.write_text(json.dumps(rows, indent=2))
     for r in rows:
-        print(f"{r['suite']:8s} linear {r['linear']}/{r['episodes']}  pi05 {r['pi05']}/{r['episodes']}  "
+        print(f"{r['suite']:8s} {kind} {r['linear']}/{r['episodes']}  pi05 {r['pi05']}/{r['episodes']}  "
               f"diff {r['diff_pp']:+.1f} pp [{r['ci95_pp'][0]:+.1f}, {r['ci95_pp'][1]:+.1f}]  "
-              f"only-linear-fails {r['only_linear_fails']} / only-pi05-fails {r['only_pi05_fails']}  p={r['mcnemar_p']:.2f}")
+              f"only-{kind}-fails {r['only_linear_fails']} / only-pi05-fails {r['only_pi05_fails']}  p={r['mcnemar_p']:.2f}")
     print(f"wrote {out}")
 
 
