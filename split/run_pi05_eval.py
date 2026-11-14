@@ -8,6 +8,7 @@ observation, the policy call and the action post-processing are swapped for π0.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -26,6 +27,7 @@ import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
 from experiments.robot.libero.libero_utils import get_libero_env, get_libero_image, get_libero_wrist_image, quat2axisangle  # noqa: E402
 from experiments.robot.robot_utils import set_seed_everywhere  # noqa: E402
 import paths  # noqa: E402
+import liberoplus_prompts  # noqa: E402
 from pi05_protocol import MAGIC_END, MAGIC_STATS, actions_from_bytes, encode_request, read_response  # noqa: E402
 
 REPLAN_STEPS = 5  # actions executed per query, as in openpi's LIBERO client
@@ -37,6 +39,9 @@ def parse_args():
     p.add_argument("--suite", default="libero_spatial")
     p.add_argument("--episodes_per_task", type=int, default=50)
     p.add_argument("--first_episode", type=int, default=0, help="First initial-state index per task")
+    p.add_argument("--task_from", type=int, default=0, help="Run tasks task_from..task_to-1 only (LIBERO-Plus chunks)")
+    p.add_argument("--task_to", type=int, default=None)
+    p.add_argument("--plus_prompt", action="store_true", help="LIBERO-Plus: untagged instruction (liberoplus_prompts.py)")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--noise_seed", type=int, default=7, help="Base seed of π0.5's per-query noise")
     p.add_argument("--out_root", default=str(paths.DATA / "pi05" / "evals"))
@@ -119,6 +124,8 @@ def main():
     stem = f"pi05_eval_seed{args.seed}_{args.episodes_per_task}ep"
     if args.first_episode:
         stem += f"_from{args.first_episode}"
+    if args.task_from or args.task_to is not None:
+        stem += f"_tasks{args.task_from}-{args.task_to}"
     if args.tag:
         stem += f"_{args.tag}"
     socket_path = args.socket or f"/tmp/vla_pi05_{args.suite}.sock"
@@ -137,6 +144,7 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
     client = Pi05Client(socket_path)
 
     queries, actions_by_episode, episode_ctx = [], {}, {}
+    first_image_md5 = {}  # per episode, to check that paired runs saw the same scene
 
     def pi05_prepare_observation(obs, resize_size):
         img = np.ascontiguousarray(get_libero_image(obs))
@@ -148,6 +156,7 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
         return observation, img
 
     def pi05_get_action(cfg_, model_, observation, task_label, **kwargs):
+        first_image_md5.setdefault(episode_ctx["episode_key"], hashlib.md5(observation["image"].tobytes()).hexdigest())
         meta = {**episode_ctx, "query": episode_ctx["queries"], "prompt": str(task_label)}
         del meta["queries"], meta["episode_key"]
         actions, timings = client.query(meta, observation["image"], observation["wrist_image"], observation["state"])
@@ -164,11 +173,16 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
     task_suite = benchmark.get_benchmark_dict()[cfg.task_suite_name]()
     successes = {}
     t_start = time.time()
+    prompts = {}
+    task_ids = range(args.task_from, task_suite.n_tasks if args.task_to is None else min(args.task_to, task_suite.n_tasks))
     with open(out_dir / f"{stem}.log", "w") as log:
-        for task_id in range(task_suite.n_tasks):
+        for task_id in task_ids:
             task = task_suite.get_task(task_id)
             initial_states = task_suite.get_task_init_states(task_id)
             env, task_description = get_libero_env(task, cfg.model_family, resolution=cfg.env_img_res)
+            if args.plus_prompt:
+                task_description = liberoplus_prompts.instruction(task)
+            prompts[task_id] = task_description
             for ep in range(args.first_episode, args.first_episode + cfg.num_trials_per_task):
                 key = f"task{task_id}_ep{ep}"
                 episode_ctx.clear()
@@ -192,7 +206,7 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
     if args.save_actions:
         np.savez(out_dir / f"{stem}_actions.npz", **actions)
     per_task = {}
-    for task_id in range(task_suite.n_tasks):
+    for task_id in task_ids:
         ks = [k for k in successes if k.startswith(f"task{task_id}_")]
         per_task[task_suite.get_task(task_id).language] = sum(successes[k] for k in ks) / len(ks)
     timed = queries[1:]  # first query excluded (warmup)
@@ -201,6 +215,7 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
         "policy": "pi05_libero (openpi PyTorch, uncompiled)" + (f" with linear map {args.linear}" if args.linear else "")
                   + (f" with MLP {args.mlp}" if args.mlp else ""),
         "first_episode": args.first_episode,
+        "task_range": [task_ids.start, task_ids.stop],
         "seed": args.seed,
         "noise_seed": args.noise_seed,
         "episodes_per_task": args.episodes_per_task,
@@ -214,6 +229,9 @@ def main_loop(args, cfg, stem, out_dir, socket_path):
         "record_dir": args.record_dir,
         "server_stats": server_stats,
         "successes": successes,
+        "first_image_md5": first_image_md5,
+        "plus_prompt": args.plus_prompt,
+        "prompts": prompts,
     }
     if args.compare_to:
         summary["compare"] = compare_actions(actions, args.compare_to)

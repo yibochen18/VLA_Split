@@ -21,6 +21,15 @@ vla_activate() {
     source "$VLA_CONDA_DIR/etc/profile.d/conda.sh" && conda activate "$VLA_CONDA_ENV"
 }
 
+# LIBERO-Plus (perturbed LIBERO): a clone of the OFT env with LIBERO-plus installed in place of LIBERO, and its own
+# LIBERO config, so the original install and ~/.libero stay untouched
+export VLA_CONDA_ENV_PLUS="${VLA_CONDA_ENV_PLUS:-openvla-oft-plus}"
+export VLA_LIBERO_PLUS="$VLA_DATA/libero_plus"
+vla_activate_plus() {
+    source "$VLA_CONDA_DIR/etc/profile.d/conda.sh" && conda activate "$VLA_CONDA_ENV_PLUS" \
+        && export LIBERO_CONFIG_PATH="$VLA_LIBERO_PLUS/config"
+}
+
 # Run a command in openpi's own environment (Python 3.11, uv); openpi itself is unmodified apart from its transformers patch
 vla_openpi() {
     UV_CACHE_DIR="$VLA_OPENPI/uv-cache" UV_PROJECT_ENVIRONMENT="$VLA_OPENPI/venv" UV_PYTHON_INSTALL_DIR="$VLA_OPENPI/python" \

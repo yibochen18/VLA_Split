@@ -2,6 +2,7 @@
 openvla-oft/
 openpi/
 LIBERO/
+LIBERO-plus/
 
 # Model weights and large data (live on /mnt/ssd/yibo)
 *.pt
@@ -43,3 +44,4 @@ docs/PROCESS.md
 # Presentation material (kept local)
 reports/
 dashboard/
+research_notes/

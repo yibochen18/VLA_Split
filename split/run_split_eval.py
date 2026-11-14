@@ -1,6 +1,7 @@
 """Closed-loop LIBERO evaluation with the split policy (Model 1 in-process, Model 2 over a socket)."""
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -17,6 +18,7 @@ import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
 from experiments.robot.libero.libero_utils import get_libero_env  # noqa: E402
 from experiments.robot.robot_utils import get_image_resize_size, set_seed_everywhere  # noqa: E402
 import paths  # noqa: E402
+import liberoplus_prompts  # noqa: E402
 import perturb  # noqa: E402
 from model1 import Model1  # noqa: E402
 from split_client import SplitClient, start_server  # noqa: E402
@@ -33,6 +35,9 @@ def parse_args():
     p.add_argument("--socket", default=None)
     p.add_argument("--bundle", default=None, help="Model 2 bundle to serve (default: <split_root>/<suite>/model2)")
     p.add_argument("--first_episode", type=int, default=0, help="First initial-state index per task")
+    p.add_argument("--task_from", type=int, default=0, help="Run tasks task_from..task_to-1 only (LIBERO-Plus chunks)")
+    p.add_argument("--task_to", type=int, default=None)
+    p.add_argument("--plus_prompt", action="store_true", help="LIBERO-Plus: untagged instruction (liberoplus_prompts.py)")
     p.add_argument("--tag", default="", help="Suffix for output file names")
     p.add_argument("--save_pairs", default=None,
                    help="Directory to save every (interface tensor, actions) pair, one file per episode (extraction test data)")
@@ -86,6 +91,8 @@ def main():
     stem = f"split_eval_seed{args.seed}_{args.episodes_per_task}ep"
     if args.first_episode:
         stem += f"_from{args.first_episode}"
+    if args.task_from or args.task_to is not None:
+        stem += f"_tasks{args.task_from}-{args.task_to}"
     if args.tag:
         stem += f"_{args.tag}"
     bundle = Path(args.bundle) if args.bundle else out_dir / "model2"
@@ -117,6 +124,7 @@ def main():
 
     queries = []
     episode_ctx = {}
+    first_image_md5 = {}  # per episode, to check that paired runs saw the same scene
     keep_tensors = args.reference is not None
     episode_pairs = []
     episode_layers = {layer: [] for layer in args.record_layers}
@@ -126,6 +134,7 @@ def main():
             (Path(args.save_pairs) / f"L{layer}").mkdir(exist_ok=True)
 
     def split_get_action(cfg_, model_, obs, task_label, **kwargs):
+        first_image_md5.setdefault(episode_ctx["episode_key"], hashlib.md5(np.ascontiguousarray(obs["full_image"]).tobytes()).hexdigest())
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         hidden = model1(obs, task_label)
@@ -167,11 +176,16 @@ def main():
     successes = {}
     log_path = out_dir / f"{stem}.log"
     t_start = time.time()
+    prompts = {}
+    task_ids = range(args.task_from, task_suite.n_tasks if args.task_to is None else min(args.task_to, task_suite.n_tasks))
     with open(log_path, "w") as log:
-        for task_id in range(task_suite.n_tasks):
+        for task_id in task_ids:
             task = task_suite.get_task(task_id)
             initial_states = task_suite.get_task_init_states(task_id)
             env, task_description = get_libero_env(task, cfg.model_family, resolution=cfg.env_img_res)
+            if args.plus_prompt:
+                task_description = liberoplus_prompts.instruction(task)
+            prompts[task_id] = task_description
             perturb.perturb_env(env, args.perturb)
             for ep in range(args.first_episode, args.first_episode + cfg.num_trials_per_task):
                 key = f"task{task_id}_ep{ep}"
@@ -210,7 +224,7 @@ def main():
     latency_ms["server_breakdown"] = server_stats["mean_ms"]
 
     per_task = {}
-    for task_id in range(task_suite.n_tasks):
+    for task_id in task_ids:
         ks = [k for k in successes if k.startswith(f"task{task_id}_")]
         per_task[task_suite.get_task(task_id).language] = sum(successes[k] for k in ks) / len(ks)
 
@@ -222,6 +236,7 @@ def main():
         "perturb": args.perturb,
         "model1_gpu_mb": {"after_load": model1_loaded_mb, "peak": torch.cuda.max_memory_allocated() / 2**20},
         "first_episode": args.first_episode,
+        "task_range": [task_ids.start, task_ids.stop],
         "seed": args.seed,
         "episodes_per_task": args.episodes_per_task,
         "num_episodes": len(successes),
@@ -234,6 +249,9 @@ def main():
         "interface_bytes_per_query": queries[0]["request_bytes"],
         "server_stats": server_stats,
         "successes": successes,
+        "first_image_md5": first_image_md5,
+        "plus_prompt": args.plus_prompt,
+        "prompts": prompts,
     }
     if args.reference:
         summary["V3"] = compare_to_reference(queries, successes, args.reference)
