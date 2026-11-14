@@ -2,11 +2,11 @@
 
 Splitting OpenVLA-OFT into two models that run in sequence: Model 1 (vision encoders + Llama 2 backbone) produces an intermediate representation, and Model 2 (the MLP action head) turns it into robot actions. Evaluated on the LIBERO simulation benchmark. The linear-replacement study is repeated on π0.5, whose action module is a flow-matching transformer rather than an MLP head.
 
-Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the 300M-parameter action expert with no significant loss overall (96.0% vs. 96.7%), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment.
+Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the ≈430M-parameter action expert with no significant loss overall on LIBERO (96.0% vs. 96.7%), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment; a small MLP does about as well. Off-distribution (LIBERO-Plus, 10,030 perturbed tasks, §16), readouts fitted on clean LIBERO behave differently for the two models: OFT's linear map stays within ~1 pp of the real head (−1.1 pp), while π0.5's linear map and MLP lose 14.8 and 9.7 pp to the real expert (up to −42 pp under camera shifts).
 
 | Document | Contents |
 |---|---|
-| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness, CPU TEE budget, π0.5 |
+| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness, CPU TEE budget, π0.5 (linear map and MLP), LIBERO-Plus robustness |
 
 ## Layout
 
@@ -16,6 +16,7 @@ split/                    our code (openvla-oft and openpi are used unmodified)
 setup_and_smoke_test.sh   one-time environment setup + 10-episode smoke test
 openvla-oft/, LIBERO/     external repos, not tracked (see below)
 openpi/                   π0.5 (Physical Intelligence), not tracked; runs in its own environment
+LIBERO-plus/              LIBERO-Plus benchmark, not tracked; its own conda env (see below)
 ```
 
 Model weights, logs, rollout videos and datasets live outside the repo under `$VLA_DATA` (`/mnt/ssd/yibo` on our server).
@@ -58,6 +59,25 @@ vla_openpi examples/convert_jax_model_to_pytorch.py --checkpoint_dir $VLA_OPENPI
 cp -r $VLA_OPENPI/data/openpi-assets/checkpoints/pi05_libero/assets $VLA_OPENPI/checkpoints/pi05_libero_pytorch/
 ```
 
+For LIBERO-Plus (§16), a clone of the OFT conda env with LIBERO-Plus installed in place of LIBERO; `vla_activate_plus` (from `env.sh`) activates it and points LIBERO's config at `$VLA_DATA/libero_plus/config`, so `~/.libero` and the original env are untouched. Its `requirements.txt` is not installed (it would downgrade numpy, transformers and robosuite):
+
+```bash
+git clone https://github.com/sylvestf/LIBERO-plus.git && git -C LIBERO-plus checkout 4976dc3
+source env.sh
+conda create -n $VLA_CONDA_ENV_PLUS --clone $VLA_CONDA_ENV && conda activate $VLA_CONDA_ENV_PLUS
+pip uninstall -y libero; pip install --no-deps -e LIBERO-plus
+pip install wand scikit-image && conda install -c conda-forge imagemagick    # sensor-noise (motion blur) variants
+# assets (9.5 GB): download assets.zip from huggingface.co/datasets/Sylvest/LIBERO-plus and unzip to $VLA_DATA/libero_plus/assets
+ln -s $VLA_DATA/libero_plus/assets LIBERO-plus/libero/libero/assets
+mkdir -p $VLA_DATA/libero_plus/config && B=$PWD/LIBERO-plus/libero/libero && cat > $VLA_DATA/libero_plus/config/config.yaml <<EOF
+assets: $B/./assets
+bddl_files: $B/./bddl_files
+benchmark_root: $B
+datasets: $B/../datasets
+init_states: $B/./init_files
+EOF
+```
+
 ## Experiments
 
 Each script writes only under `$VLA_DATA`; run them in this order (RESULTS.md section in brackets):
@@ -74,4 +94,70 @@ split/bench_tee.py                               what fits in a CPU TEE (§14)
 split/pi05_check_state.py, run_pi05_baselines.sh π0.5: checks and baselines with recording (§15)
 split/ridge_pi05.py                              π0.5: choosing the linear map's input (§15)
 split/run_pi05_cv.sh, pi05_cv_summary.py         π0.5: 5-fold closed loop vs. same-scene π0.5 (§15)
+split/run_pi05_mlp_cv.sh, pi05_cv_summary.py mlp π0.5: small MLP in place of the expert, 5-fold (§15)
+split/run_liberoplus.py, liberoplus_summary.py   LIBERO-Plus, real models vs. clean-LIBERO readouts (§16)
 ```
+
+## Running on LIBERO and LIBERO-Plus
+
+Every evaluation runs from `openvla-oft/` (its LIBERO harness drives all episodes) and writes a result JSON plus a log
+under `$VLA_DATA`. Times are for one RTX 4090.
+
+**1. Real models on LIBERO** (500 episodes per suite: 10 tasks × 50 initial states, seed 7; ~1–2 h per suite)
+
+```bash
+source env.sh && vla_activate && cd openvla-oft
+S=libero_spatial                       # or libero_object, libero_goal, libero_10
+# OpenVLA-OFT, unsplit (stock script)
+python experiments/robot/libero/run_libero_eval.py --task_suite_name $S --seed 7 \
+    --pretrained_checkpoint moojink/openvla-7b-oft-finetuned-${S/_/-}
+# OpenVLA-OFT, split at cut A: export Model 2 once, then Model 1 in-process + Model 2 over a socket
+python ../split/export_model2.py --suite $S
+python ../split/run_split_eval.py --suite $S
+# π0.5 (starts its server in openpi's env itself)
+python ../split/run_pi05_eval.py --suite $S
+```
+
+**2. Readouts on LIBERO** (record traffic, fit, then serve the readout in place of the action module)
+
+```bash
+# OFT: record (interface, action) pairs with the real split, fit the linear map on starts 10-49, test on starts 0-9
+python ../split/run_split_eval.py --suite $S --split_root $VLA_DATA/linear_head/record --save_pairs $VLA_DATA/linear_head/pairs/$S
+python ../split/ridge_head.py --pairs_dir $VLA_DATA/linear_head/pairs/$S --test_from 0 --test_to 10 --val_from 10 --val_to 20 \
+    --out $VLA_DATA/linear_head/heads/${S}_fold0
+python ../split/run_split_eval.py --suite $S --episodes_per_task 10 --bundle $VLA_DATA/linear_head/heads/${S}_fold0 --tag ridge_fold0
+
+# π0.5: record backbone states with the baseline run, fit the linear map or the MLP, serve it
+python ../split/run_pi05_eval.py --suite $S --save_actions --record_dir $VLA_DATA/pi05/record/$S
+python ../split/ridge_pi05.py --record_dir $VLA_DATA/pi05/record/$S --layer layer18_in --pool 4 \
+    --test_from 0 --test_to 10 --val_from 10 --val_to 20 --out $VLA_DATA/pi05/cv/heads/${S}_fold0
+python ../split/mlp_pi05.py --record_dir $VLA_DATA/pi05/record/$S --cache $VLA_DATA/pi05/features/pool4/$S.pt \
+    --test_from 0 --test_to 10 --val_from 10 --val_to 20 --out $VLA_DATA/pi05/mlp_cv_std/heads/${S}_fold0
+python ../split/run_pi05_eval.py --suite $S --episodes_per_task 10 --linear $VLA_DATA/pi05/cv/heads/${S}_fold0 --tag linear_fold0
+python ../split/run_pi05_eval.py --suite $S --episodes_per_task 10 --mlp $VLA_DATA/pi05/mlp_cv_std/heads/${S}_fold0 --tag mlp_fold0
+```
+
+This is fold 0. The full 5-fold runs with their paired same-scene references are `run_linear_record.sh` +
+`run_linear_cv.sh` (OFT) and `run_pi05_baselines.sh` + `run_pi05_cv.sh` + `run_pi05_mlp_cv.sh` (π0.5); summaries
+with `pi05_cv_summary.py [mlp]`. A readout's real-model reference must be run the same way (same first start), since
+LIBERO's scenes depend on episode order (RESULTS.md §9).
+
+**3. LIBERO-Plus** (needs step 2's fold-0 readouts for all four suites; install as above)
+
+```bash
+source env.sh && vla_activate_plus
+python split/run_liberoplus.py --dry_run           # lists the 215 jobs: 5 setups x 4 suites, 250-task chunks
+python split/run_liberoplus.py --gpus 1            # or --gpu_units 1:2 0:1 for a second, partly free GPU
+python split/liberoplus_summary.py                 # -> $VLA_DATA/libero_plus/summary.json
+```
+
+All 50,150 episodes took ~3 days on two shared RTX 4090s; rerunning resumes from the finished chunks. One chunk by
+hand, e.g. π0.5 with its linear map on Spatial tasks 0-249:
+
+```bash
+cd openvla-oft && python ../split/run_pi05_eval.py --suite libero_spatial --episodes_per_task 1 --task_from 0 --task_to 250 \
+    --plus_prompt --linear $VLA_DATA/pi05/cv/heads/libero_spatial_fold0 --out_root $VLA_DATA/libero_plus/evals/pi05_linear --tag pi05_linear
+```
+
+`--plus_prompt` sends each task's untagged LIBERO instruction (`split/liberoplus_prompts.py`, RESULTS.md §16); leave
+it out to use LIBERO-Plus's own (tagged) `task.language`.
