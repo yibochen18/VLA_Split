@@ -49,6 +49,14 @@ def parse_args():
     p.add_argument("--truncate", action="store_true",
                    help="With --interface_layer: run only Llama layers 1..interface_layer instead of reading that "
                         "layer from a full forward pass (same tensor; measures the compute actually saved)")
+    # Secret parts (RESULTS §17)
+    p.add_argument("--public_swap", nargs="*", default=[],
+                   help="Replace these parts with the public openvla-7b weights: vision, projector, llm:A-B")
+    p.add_argument("--public_lora", default=None, help="With --public_swap: merge this LoRA (fit_secret_lora.py) into them")
+    p.add_argument("--blackbox", default=None, help="Replacement for a block of Llama layers (fit_blackbox.py)")
+    p.add_argument("--record_full", default=None,
+                   help="Directory: save each query's pixels, LLM input and hidden states (all tokens), one file per query")
+    p.add_argument("--record_full_layers", type=int, nargs="*", default=[8, 16], help="Hidden states saved by --record_full")
     p.add_argument("--perturb", choices=perturb.KINDS, default="none",
                    help="Distribution shift applied to every episode (robustness test; see perturb.py)")
     return p.parse_args()
@@ -117,6 +125,28 @@ def main():
     except BaseException:
         server.kill()
         raise
+    # Secret parts: public weights (+ LoRA), a black-box replacement, or recording their traffic
+    assert not args.public_lora or args.public_swap, "--public_lora needs --public_swap"
+    swapped, full = {}, {}
+    if args.public_swap:
+        from public_swap import swap_public
+        swapped = swap_public(model1.vla, args.public_swap)
+        print(f"Public weights swapped in: {swapped}", flush=True)
+    if args.public_lora:
+        from secret_lora import merge_lora
+        n = merge_lora(model1.vla, torch.load(args.public_lora, weights_only=False)["lora"])
+        swapped["lora"] = {"path": args.public_lora, "modules": n}
+        print(f"LoRA merged into {n} modules", flush=True)
+    if args.blackbox:
+        import blackbox
+        bb_module, bb_block, _ = blackbox.load(args.blackbox, "cuda")
+        blackbox.install_hooks(model1.vla, bb_module, bb_block)
+        swapped["blackbox"] = {"path": args.blackbox, "block": bb_block}
+        print(f"Black-box replacement for layers {bb_block[0]}-{bb_block[1]}: {args.blackbox}", flush=True)
+    if args.record_full:
+        from secret_lora import record_hooks
+        Path(args.record_full).mkdir(parents=True, exist_ok=True)
+        record_hooks(model1.vla, args.record_full_layers, full)
     model1_loaded_mb = torch.cuda.memory_allocated() / 2**20
     torch.cuda.reset_peak_memory_stats()
     resize_size = get_image_resize_size(cfg)
@@ -153,6 +183,11 @@ def main():
             episode_pairs.append((hidden.cpu(), actions))
             for layer in args.record_layers:
                 episode_layers[layer].append(per_layer[layer].cpu())
+        if args.record_full:
+            n_q = sum(1 for q in queries if q["episode_key"] == episode_ctx["episode_key"])
+            torch.save({**full, "actions": actions, "episode_key": episode_ctx["episode_key"]},
+                       Path(args.record_full) / f"{episode_ctx['episode_key']}_q{n_q:03d}.pt")
+            full.clear()
         queries.append(record)
         return list(actions)
 
@@ -234,6 +269,7 @@ def main():
         "interface_layer": args.interface_layer,
         "truncated": args.truncate,
         "perturb": args.perturb,
+        "public_swap": swapped,
         "model1_gpu_mb": {"after_load": model1_loaded_mb, "peak": torch.cuda.max_memory_allocated() / 2**20},
         "first_episode": args.first_episode,
         "task_range": [task_ids.start, task_ids.stop],

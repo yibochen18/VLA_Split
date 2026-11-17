@@ -2,11 +2,11 @@
 
 Splitting OpenVLA-OFT into two models that run in sequence: Model 1 (vision encoders + Llama 2 backbone) produces an intermediate representation, and Model 2 (the MLP action head) turns it into robot actions. Evaluated on the LIBERO simulation benchmark. The linear-replacement study is repeated on π0.5, whose action module is a flow-matching transformer rather than an MLP head.
 
-Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the ≈430M-parameter action expert with no significant loss overall on LIBERO (96.0% vs. 96.7%), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment; a small MLP does about as well. Off-distribution (LIBERO-Plus, 10,030 perturbed tasks, §16), readouts fitted on clean LIBERO behave differently for the two models: OFT's linear map stays within ~1 pp of the real head (−1.1 pp), while π0.5's linear map and MLP lose 14.8 and 9.7 pp to the real expert (up to −42 pp under camera shifts).
+Main findings: the split is exact; Model 2 can be copied from ~100 observed queries; one linear map fitted from observed traffic replaces Model 2 with no loss in success or robustness, and from layer 24 also replaces the top 8 Llama layers (~15% faster per query). On π0.5, one linear map replaces the ≈430M-parameter action expert with no significant loss overall on LIBERO (96.0% vs. 96.7%), with queries 73% faster in uncompiled PyTorch; may be smaller in a compiled deployment; a small MLP does about as well. Off-distribution (LIBERO-Plus, 10,030 perturbed tasks, §16), readouts fitted on clean LIBERO behave differently for the two models: OFT's linear map stays within ~1 pp of the real head (−1.1 pp), while π0.5's linear map and MLP lose 14.8 and 9.7 pp to the real expert (up to −42 pp under camera shifts). Keeping the beginning or middle of OFT secret instead (§17) fails too: OFT is the public `openvla-7b` plus a rank-32 LoRA, so public weights plus a LoRA fitted on ~100–1,000 observed queries of the secret part's input and output restore the robot to within ~3 points of the real model; without public weights, a small transformer trained from scratch on ~1,000–5,000 observed queries still replaces a secret middle block (layers 9–16: 92–99 vs. 94–95), and layers 1–16 mostly (80–91).
 
 | Document | Contents |
 |---|---|
-| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness, CPU TEE budget, π0.5 (linear map and MLP), LIBERO-Plus robustness |
+| [docs/RESULTS.md](docs/RESULTS.md) | Measured results: baseline, cut A split, extraction tests, linear-head replacement, depth sweep, compute and observation cost, robustness, CPU TEE budget, π0.5 (linear map and MLP), LIBERO-Plus robustness, secret beginning or middle layers |
 
 ## Layout
 
@@ -96,6 +96,9 @@ split/ridge_pi05.py                              π0.5: choosing the linear map'
 split/run_pi05_cv.sh, pi05_cv_summary.py         π0.5: 5-fold closed loop vs. same-scene π0.5 (§15)
 split/run_pi05_mlp_cv.sh, pi05_cv_summary.py mlp π0.5: small MLP in place of the expert, 5-fold (§15)
 split/run_liberoplus.py, liberoplus_summary.py   LIBERO-Plus, real models vs. clean-LIBERO readouts (§16)
+split/public_diff.py, run_public_swap.sh         secret beginning/middle: weight comparison, public weights swapped in (§17)
+split/run_secret_lora.sh                         secret beginning/middle: LoRA fitted on recorded traffic (§17)
+split/run_blackbox.sh, fit_blackbox.py           secret block, no public weights: replacements trained from scratch (§17)
 ```
 
 ## Running on LIBERO and LIBERO-Plus
