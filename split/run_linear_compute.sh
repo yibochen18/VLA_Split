@@ -69,6 +69,12 @@ if [ "$1" = rerun_missing ]; then  # redo failed fits
     log "ALL DONE"; exit
 fi
 
+if [ "$1" = long24 ]; then  # Long budget runs at layer 24, and the head at N = 100
+    data_efficiency libero_10 32 100
+    data_efficiency libero_10 24 "100 500 1000 2500 5000"
+    log "ALL DONE"; exit
+fi
+
 log "1. compute benchmark"
 gpu_run bench libero_spatial
 gpu_run bench libero_10
