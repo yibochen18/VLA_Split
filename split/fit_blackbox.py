@@ -1,8 +1,11 @@
 """Fit a from-scratch replacement for secret Llama layers a..b (blackbox.py) on N observed queries.
 
+Loss ("scaled", default): squared error per feature, scaled by the target's spread. "scaled_rel" and "scaled_slots"
+add a per-token relative error or extra weight on the 56 action slots (tried, not used).
+
 Budget: N queries in all. 20% of them (at least 20) are the attacker's own held-out set ("sel") for choosing lambda
 (linear; then refit on all N) or the best step (mlp, tf<k>); the rest train. 200 other recorded queries only report
-the error (squared error per feature, scaled by the target's spread).
+the error (same loss).
 
   python split/fit_blackbox.py --block 9 16 --kind tf2 --record_dir $VLA_DATA/secret_lora/record/libero_spatial \
       --n_queries 1000 --out .../L9-16_tf2_n1000.pt
@@ -25,8 +28,9 @@ from secret_lora import query_files  # noqa: E402
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--block", type=int, nargs=2, required=True, help="First and last secret Llama layer (1-based)")
-    p.add_argument("--kind", required=True, help="identity, linear, mlp, tf2, tf4")
+    p.add_argument("--block", nargs="+", required=True,
+                   help="First and last secret Llama layer (1-based), or 'vision' (encoder + projector)")
+    p.add_argument("--kind", required=True, help="identity, linear, mlp, tf2, tf4, tf8; vit for --block vision")
     p.add_argument("--record_dir", required=True)
     p.add_argument("--n_queries", type=int, required=True)
     p.add_argument("--n_report", type=int, default=200, help="Recorded queries for the reported error only")
@@ -35,12 +39,37 @@ def parse_args():
     p.add_argument("--batch", type=int, default=4, help="Queries per step")
     p.add_argument("--lr", type=float, default=None, help="Default 1e-4 (mlp), 3e-4 (tf)")
     p.add_argument("--eval_every", type=int, default=500)
+    p.add_argument("--loss", default="scaled", help="scaled, scaled_slots, or scaled_rel (tried, not used)")
+    p.add_argument("--seed", type=int, default=0, help="Training seed (init and batch order); same data subset")
+    p.add_argument("--optim", default="adamw", help="adamw, or adamw8bit (bitsandbytes; tf8 does not fit in 24 GB otherwise)")
     p.add_argument("--out", required=True)
     return p.parse_args()
 
 
+LOSS = "scaled"
+
+
 def scaled_mse(pred, y, scale):
     return (((pred.float() - y.float()) / scale) ** 2).mean()
+
+
+def token_rel(pred, y):
+    """Mean over tokens of ||pred - y||^2 / ||y||^2."""
+    y = y.float()
+    return (((pred.float() - y) ** 2).sum(-1) / (y ** 2).sum(-1).clamp_min(1e-6)).mean()
+
+
+SLOT_SCALE = None
+SLOTS = slice(-57, -1)  # the 56 action slots, before the stop token
+
+
+def loss_fn(pred, y, scale):
+    loss = scaled_mse(pred, y, scale)
+    if LOSS == "scaled_rel":
+        return loss + token_rel(pred, y)
+    if LOSS == "scaled_slots":
+        return loss + scaled_mse(pred[..., SLOTS, :], y[..., SLOTS, :], SLOT_SCALE)
+    return loss
 
 
 @torch.no_grad()
@@ -50,8 +79,21 @@ def evaluate(module, pairs, scale, dev):
     for h_in, h_out in pairs:
         with torch.autocast("cuda", dtype=torch.bfloat16):
             pred = module(h_in.to(dev)[None])
-        tot += float(scaled_mse(pred[0], h_out.to(dev), scale))
+        tot += float(loss_fn(pred[0], h_out.to(dev), scale))
     return tot / len(pairs)
+
+
+@torch.no_grad()
+def report_terms(module, pairs, scale, dev):
+    """Both loss terms separately, for the record."""
+    module.eval()
+    sc = rel = 0.0
+    for h_in, h_out in pairs:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            pred = module(h_in.to(dev)[None])[0]
+        sc += float(scaled_mse(pred, h_out.to(dev), scale))
+        rel += float(token_rel(pred, h_out.to(dev)))
+    return {"scaled": sc / len(pairs), "token_rel": rel / len(pairs)}
 
 
 def feature_stats(pairs, dev, which):
@@ -102,11 +144,16 @@ def fit_sgd(module, train, sel, scale, dev, args):
     """AdamW, warmup + cosine; keeps the step with the lowest error on `sel`."""
     lr = args.lr or (1e-4 if args.kind == "mlp" else 3e-4)
     params = [p for p in module.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(params, lr=lr, weight_decay=0.01)
+    if args.optim == "adamw8bit":
+        import bitsandbytes as bnb
+        opt = bnb.optim.AdamW8bit(params, lr=lr, weight_decay=0.01)
+    else:
+        opt = torch.optim.AdamW(params, lr=lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, (s + 1) / 200) * 0.5 * (1 + torch.cos(torch.tensor(s / args.steps * torch.pi)).item()))
-    rng = random.Random(1)
-    best = (evaluate(module, sel, scale, dev), 0, {k: v.detach().clone() for k, v in module.state_dict().items()})
+    rng = random.Random(1 + args.seed)
+    snapshot = lambda: {k: v.detach().to("cpu", copy=True) for k, v in module.state_dict().items()}  # noqa: E731
+    best = (evaluate(module, sel, scale, dev), 0, snapshot())
     log = [{"step": 0, "sel": best[0]}]
     t0 = time.time()
     for step in range(1, args.steps + 1):
@@ -117,7 +164,7 @@ def fit_sgd(module, train, sel, scale, dev, args):
             h_in, h_out = rng.choice(train)
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 pred = module(h_in.to(dev, non_blocking=True)[None])
-            loss = scaled_mse(pred[0], h_out.to(dev, non_blocking=True), scale) / args.batch
+            loss = loss_fn(pred[0], h_out.to(dev, non_blocking=True), scale) / args.batch
             loss.backward()
             tot += float(loss)
         torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -128,16 +175,18 @@ def fit_sgd(module, train, sel, scale, dev, args):
             log.append({"step": step, "train": tot, "sel": err})
             print(f"step {step} train {tot:.4f} sel {err:.4f} ({(time.time() - t0) / 60:.1f} min)", flush=True)
             if err < best[0]:
-                best = (err, step, {k: v.detach().clone() for k, v in module.state_dict().items()})
+                best = (err, step, snapshot())
     module.load_state_dict(best[2])
-    return {"lr": lr, "best_step": best[1], "log": log}
+    return {"lr": lr, "optim": args.optim, "steps": args.steps, "best_step": best[1], "log": log}
 
 
 def main():
+    global LOSS, SLOT_SCALE
     args = parse_args()
+    LOSS = args.loss
     dev = torch.device("cuda")
-    torch.manual_seed(0)
-    block = tuple(args.block)
+    torch.manual_seed(args.seed)
+    block = "vision" if args.block == ["vision"] else tuple(int(x) for x in args.block)
     order = query_files(args.record_dir)
     random.Random(args.subset_seed).shuffle(order)  # same subsets as fit_secret_lora.py
     assert len(order) >= args.n_queries + args.n_report
@@ -150,6 +199,8 @@ def main():
           f"({(time.time() - t0) / 60:.1f} min)", flush=True)
 
     _, scale = feature_stats(report if not train else train, dev, 1)
+    if LOSS == "scaled_slots":
+        _, SLOT_SCALE = feature_stats([(None, y[SLOTS]) for _, y in train], dev, 1)
     module = blackbox.build(args.kind).to(dev)
     info = {}
     if args.kind in ("linear", "mlp"):
@@ -163,14 +214,16 @@ def main():
     elif args.kind != "identity":
         info = fit_sgd(module, train, sel, scale, dev, args)
     err = evaluate(module, report, scale, dev)
-    print(f"fitted: report {err:.4f}", flush=True)
+    terms = report_terms(module, report, scale, dev)
+    print(f"fitted: report {err:.4f} ({terms})", flush=True)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     n_params = sum(p.numel() for p in module.parameters())
     blackbox.save(out, args.kind, block, module.cpu(), {"n_queries": args.n_queries})
     out.with_suffix(".json").write_text(json.dumps({
         "block": block, "kind": args.kind, "n_queries": args.n_queries, "n_train": len(train), "n_selection": len(sel),
-        "n_report": len(report), "params": n_params, "report_identity": err0, "report_fitted": err,
+        "n_report": len(report), "params": n_params, "loss": args.loss, "seed": args.seed,
+        "report_identity": err0, "report_fitted": err, "report_terms": terms,
         "minutes": (time.time() - t0) / 60, **info}, indent=2))
 
 

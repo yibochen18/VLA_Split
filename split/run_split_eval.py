@@ -53,7 +53,7 @@ def parse_args():
     p.add_argument("--public_swap", nargs="*", default=[],
                    help="Replace these parts with the public openvla-7b weights: vision, projector, llm:A-B")
     p.add_argument("--public_lora", default=None, help="With --public_swap: merge this LoRA (fit_secret_lora.py) into them")
-    p.add_argument("--blackbox", default=None, help="Replacement for a block of Llama layers (fit_blackbox.py)")
+    p.add_argument("--blackbox", default=None, help="Replacement for a block of Llama layers or the vision encoder (fit_blackbox.py)")
     p.add_argument("--record_full", default=None,
                    help="Directory: save each query's pixels, LLM input and hidden states (all tokens), one file per query")
     p.add_argument("--record_full_layers", type=int, nargs="*", default=[8, 16], help="Hidden states saved by --record_full")
@@ -142,7 +142,8 @@ def main():
         bb_module, bb_block, _ = blackbox.load(args.blackbox, "cuda")
         blackbox.install_hooks(model1.vla, bb_module, bb_block)
         swapped["blackbox"] = {"path": args.blackbox, "block": bb_block}
-        print(f"Black-box replacement for layers {bb_block[0]}-{bb_block[1]}: {args.blackbox}", flush=True)
+        what = "vision encoder + projector" if bb_block == "vision" else f"layers {bb_block[0]}-{bb_block[1]}"
+        print(f"Black-box replacement for {what}: {args.blackbox}", flush=True)
     if args.record_full:
         from secret_lora import record_hooks
         Path(args.record_full).mkdir(parents=True, exist_ok=True)

@@ -6,6 +6,8 @@ output as h_in + update and starts as the identity:
   linear    per-token linear map on standardized input (ridge)
   mlp       per-token MLP 4096 -> 8192 -> 4096
   tf<k>     k Llama-style layers at OFT's width, random init
+  vit       for the vision encoder + projector (block "vision"): a small ViT from scratch, camera images -> the 512
+            image tokens the LLM receives (no residual: input and output differ)
 
 Served by hooks: the real block still runs and its output is replaced by the replacement's prediction, which is
 the same as the replacement standing in for the block.
@@ -67,6 +69,29 @@ class SmallTransformer(nn.Module):
         return self.model(inputs_embeds=h, attention_mask=mask, use_cache=False, return_dict=True).last_hidden_state
 
 
+class VisionViT(nn.Module):
+    """Per camera image (6 channels: OFT's two normalizations), 14x14 patches -> 256 tokens -> 4096; both images share
+    the weights, as OFT's encoder does. Width 512, 8 layers, 8 heads (~27M parameters)."""
+
+    def __init__(self, width=512, depth=8, heads=8, channels=6, patch=14, n_patches=256):
+        super().__init__()
+        self.channels = channels
+        self.embed = nn.Conv2d(channels, width, patch, patch)
+        self.pos = nn.Parameter(torch.randn(1, n_patches, width) * 0.02)
+        layer = nn.TransformerEncoderLayer(width, heads, 4 * width, dropout=0.0, activation="gelu",
+                                           batch_first=True, norm_first=True)
+        self.blocks = nn.TransformerEncoder(layer, depth)
+        self.norm = nn.LayerNorm(width)
+        self.out = nn.Linear(width, D)
+
+    def forward(self, px):
+        toks = []
+        for img in torch.split(px, self.channels, dim=1):
+            x = self.embed(img).flatten(2).transpose(1, 2) + self.pos
+            toks.append(self.out(self.norm(self.blocks(x))))
+        return torch.cat(toks, dim=1)
+
+
 # --- Saving, loading, serving
 
 def build(kind):
@@ -76,6 +101,8 @@ def build(kind):
         return PerToken(kind)
     if kind.startswith("tf"):
         return SmallTransformer(int(kind[2:]))
+    if kind == "vit":
+        return VisionViT()
     raise ValueError(kind)
 
 
@@ -90,11 +117,14 @@ def load(path, device):
     m.to(device).eval()
     if d["kind"].startswith("tf"):
         m.to(torch.bfloat16)
-    return m, tuple(d["block"]), d
+    return m, (d["block"] if d["block"] == "vision" else tuple(d["block"])), d
 
 
 def install_hooks(vla, module, block):
-    """Replace the output of Llama layers block[0]..block[1] (1-based) with module(input to block[0])."""
+    """Replace the output of Llama layers block[0]..block[1] (1-based) with module(input to block[0]); for block
+    "vision", the projector's output (image tokens) with module(pixels)."""
+    if block == "vision":
+        return install_vision_hooks(vla, module)
     a, b = block
     layers = vla.language_model.model.layers
     held = {}
@@ -113,12 +143,34 @@ def install_hooks(vla, module, block):
             layers[b - 1].register_forward_hook(replace_output, with_kwargs=True)]
 
 
+def install_vision_hooks(vla, module):
+    held = {}
+
+    def keep_pixels(mod, args):
+        held["px"] = args[0]
+
+    @torch.no_grad()
+    def replace_output(mod, args, output):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            out = module(held.pop("px"))
+        return out.to(output.dtype)
+
+    return [vla.vision_backbone.register_forward_pre_hook(keep_pixels),
+            vla.projector.register_forward_hook(replace_output)]
+
+
 # --- Training data
 
 def load_pairs(files, block):
-    """(h_in, h_out) per recorded query, bf16 on CPU. Block input: layer a-1's output (0 = LLM input)."""
-    a, b = block
+    """(h_in, h_out) per recorded query, bf16 on CPU. Block input: layer a-1's output (0 = LLM input). Block
+    "vision": (pixels, the 512 image tokens of the LLM input)."""
     pairs = []
+    if block == "vision":
+        for f in files:
+            d = torch.load(f, weights_only=False)
+            pairs.append((d["pixel_values"][0].contiguous(), d["inputs_embeds"][0, 1:513].contiguous()))
+        return pairs
+    a, b = block
     for f in files:
         d = torch.load(f, weights_only=False)
         h_in = d["inputs_embeds"] if a == 1 else d["h"][a - 1]
