@@ -6,7 +6,11 @@ Running record of measured results for the OpenVLA-OFT split project.
 
 **Update (2026-11-12, LIBERO-Plus, §16):** on 10,030 perturbed LIBERO tasks (camera, robot start, language, light, background, sensor noise, object layout), with readouts fitted on clean LIBERO only. **OFT:** the linear map stays within ~1 pp of the real head (−1.1 pp, 10,030 paired tasks; at most −3.4 pp under any shift). **π0.5:** the readouts fall well behind the real expert (linear −14.8 pp, MLP −9.7 pp; camera −26 / −21, sensor noise −21 / −18), so π0.5's expert adds robustness that a readout of the pooled layer-18 input fitted on clean traffic does not reproduce, unlike OFT's head.
 
-**Update (2026-11-15, secret beginning or middle, §17):** keeping the beginning or middle of OFT secret does not protect it either. OFT is the public `openvla-7b` + a rank-32 LoRA: plugging in the public weights already works for 8 secret layers on Spatial (90–98 vs. 95; Long 77–89 vs. 94), and for larger secret parts (layers 1–16, the vision encoder, vision + layers 1–8) a rank-32 LoRA fitted on 100 observed queries of the secret part's input and output brings Spatial back to 95–98 and Long to 86–90 (1,000 queries: 91–93; real 94). **Without public weights** (black box, 2026-11-16), a 2-layer transformer trained from scratch on observed traffic replaces layers 9–16 from 1,000 queries (Spatial 96) and reaches 92–99 at 5,000; layers 1–16 are harder (5,000 queries: Spatial 91, Long 80 vs. 94) but already mostly work. Unpublished weights raise the data the attacker needs by an order of magnitude or more; they do not stop the copy.
+**Update (2026-11-22, Long budgets and layers 1–16 at N = 100, §11 and §17):** on Long, the layer-24 linear readout (top 8 layers + head replaced) scores 56 from 100 observed queries, 87–92 from 500 to 2,500 and 94 from 5,000 (real 94); the head alone scores 82 at 100 queries. Layers 1–16 fine-tuned end to end from only 100 queries are not rebuilt (Spatial 30 / 32, Long 0 / 2 for the 2- / 4-layer replacement).
+
+**Update (2026-11-21, copying on Long, §6):** the head copy holds on LIBERO-Long too: OFT's head architecture trained on 100 observed Long queries scores 96 vs. the real model's 94 on the same scenes; the small MLP and linear copies need 1,000–5,000 queries there (5,000: 96 and 95).
+
+**Update (2026-11-15, secret beginning or middle, §17):** keeping the beginning or middle of OFT secret does not protect it either. OFT is the public `openvla-7b` + a rank-32 LoRA: plugging in the public weights already works for 8 secret layers on Spatial (90–98 vs. 95; Long 77–89 vs. 94), and for larger secret parts (layers 1–16, the vision encoder, vision + layers 1–8) a rank-32 LoRA fitted on 100 observed queries of the secret part's input and output brings Spatial back to 95–98 and Long to 86–90 (1,000 queries: 91–93; real 94); added 2026-11-21, the same LoRA on layers 9–16 and 1–9 gives Spatial 96–98 from 100 queries and Long 94 from 1,000. **Without public weights** (black box, 2026-11-16), a 2-layer transformer trained from scratch on observed traffic replaces layers 9–16 from 1,000 queries (Spatial 96) and reaches 92–99 at 5,000; layers 1–16 are harder (5,000 queries: Spatial 91, Long 80 vs. 94) but already mostly work. Unpublished weights raise the data the attacker needs by an order of magnitude or more; they do not stop the copy. **Follow-up (2026-11-20):** fits of blocks starting at layer 1 vary a lot from seed to seed with the reconstruction loss (layers 1–9: 11–92); fine-tuned end to end through the attacker's own later layers to match the executed actions, layers 1–9 score 97–99 on Spatial in all six runs with ≥ 1,000 queries (Long 82–95) and layers 1–16 reach 98 on Spatial and 83–89 on Long at 5,000 queries.
 
 ---
 
@@ -14,7 +18,7 @@ Running record of measured results for the OpenVLA-OFT split project.
 
 | Item | Value |
 |---|---|
-| Hardware | 1× NVIDIA RTX 4090 (24 GB), shared server; runs on GPU 1 |
+| Hardware | 1× NVIDIA RTX 4090 (24 GB), shared server; runs on GPU 1 (§16 and some §17 fits also used the second 4090, GPU 0) |
 | Model | OpenVLA-OFT, one released checkpoint per suite (`moojink/openvla-7b-oft-finetuned-libero-{spatial,object,goal,10}`) |
 | Eval config | Script defaults: 2 images (third-person + wrist), proprio, L1-regression head, center crop, 8-step chunks executed open-loop |
 | Software | Python 3.10, PyTorch 2.2.0 (cu121), transformers 4.40.1 (OFT fork), robosuite 1.4.1, MuJoCo 3.3.0 |
@@ -119,7 +123,7 @@ LIBERO-Spatial, 1 episode per task (10 episodes, 132 queries), run twice with se
 | Same success per episode | ✅ 10/10 both runs |
 | Hidden states (interface) bitwise identical | ✅ |
 | Final actions bitwise identical | ✅ (max diff 0.0) |
-| Head alone, re-run on saved hidden states, reproduces actions | ✅ bitwise (max diff 0.0) |
+| Head alone, re-run on saved hidden states, reproduces its (normalized) actions | ✅ bitwise (max diff 0.0) |
 
 **Implications:**
 
@@ -146,7 +150,7 @@ Paths are relative to `$VLA_DATA` (set in `env.sh`; `/mnt/ssd/yibo` on our serve
 ```bash
 # edit env.sh first if not on our server
 bash setup_and_smoke_test.sh                     # environment (one-time)
-bash split/run_baselines.sh                      # full baselines (edit suite list inside)
+bash split/run_baselines.sh                      # Object, Goal, Long baselines (Spatial: PROCESS.md §1.1)
 source env.sh && vla_activate && cd openvla-oft
 python ../split/probe_baseline.py            # reference dataset, latency, determinism
 ```
@@ -199,7 +203,7 @@ Both measured end to end with no per-module timers, Spatial, the same 10 episode
 
 ---
 
-## 6. Extraction (copying) test, cut A, Spatial
+## 6. Extraction (copying) test, cut A, Spatial and Long
 
 Can someone who sees the cut-A traffic (interface tensor in, executed actions out) build their own Model 2? We recorded the real split's traffic over 500 episodes (~6,600 queries), trained replacement heads on N recorded queries from episodes 0–39, and ran each replacement **in place of Model 2** on 100 held-out starts.
 
@@ -209,9 +213,9 @@ Can someone who sees the cut-A traffic (interface tensor in, executed actions ou
 |---|---|---|---|---|
 | 100 | 8 episodes, ~40 s | 97 | 96 | 81 |
 | 500 | 39 episodes, ~3 min | 97 | 98 | 92 |
-| 1,000 | 76 episodes, ~6 min | 96 | 98 | 98 |
-| 2,500 | 190 episodes, ~15 min | 97 | 99 | 97 |
-| 5,000 | 378 episodes, ~30 min | 98 | 98 | 96 |
+| 1,000 | 76 episodes, ~7 min | 96 | 98 | 98 |
+| 2,500 | 190 episodes, ~17 min | 97 | 99 | 97 |
+| 5,000 | 378 episodes, ~33 min | 98 | 98 | 96 |
 
 Closed-loop successes out of the 100 held-out episodes (initial states 40–49 of every task, run alone starting at 40). **The real Model 2 scores 95/100 when run the same way** (98/100 on the same starts inside its full 500-episode run, where the scenes differ slightly, §9). With 100 episodes, differences of 1–3 are within noise (±~3 at these rates).
 
@@ -229,9 +233,31 @@ Held-out mean L1 error on the 6 continuous action dimensions (always predicting 
 
 ### Takeaway
 
-**Cut A gives essentially no protection against copying.** A replacement trained for ~10 seconds on 100 recorded queries (under a minute of robot operation) matches the real Model 2 (97 vs 95 out of 100 on identical scenes). Even a single linear layer reaches the real model's level from 1,000 queries. Hiding the action head behind the interface is therefore not enough to keep Model 2's behavior secret; the next step is a deeper cut (B-k) and the same measurement.
+**Cut A gives essentially no protection against copying.** A replacement trained for ~10 seconds on 100 recorded queries (under a minute of robot operation) matches the real Model 2 (96 vs 95 out of 100 on identical scenes). Even a single linear layer reaches the real model's level from 1,000 queries. Hiding the action head behind the interface is therefore not enough to keep Model 2's behavior secret; the next step is a deeper cut (B-k) and the same measurement.
 
 Data: `$VLA_DATA/extraction/libero_spatial/` (pairs, replacements), closed-loop results `$VLA_DATA/split/libero_spatial/split_eval_seed7_10ep_from40_<arch>_n<N>.json`.
+
+### LIBERO-Long (added 2026-11-21)
+
+Same recipe on Long (`split/run_extraction_long.sh`): copies trained on N queries of the real split's recorded Long traffic (the linear-head study's 500-episode recording, §8; episodes 0–39), run in place of Model 2 on held-out starts 40–49 (run alone from 40). **The real Model 2 scores 94/100 run the same way.** N = 100 / 1,000 / 5,000 only.
+
+| Queries recorded | `oft` (151M) | `mlp` (14.7M) | `linear` (0.2M) |
+|---|---|---|---|
+| 100 | 96 | 72 | 41 |
+| 1,000 | 93 | 91 | 82 |
+| 5,000 | 96 | 96 | 95 |
+
+Held-out offline L1 (predicting the mean: 0.137–0.139; gripper accuracy ≥ 99.99%):
+
+| Queries | `oft` L1 | `mlp` L1 | `linear` L1 |
+|---|---|---|---|
+| 100 | 0.0146 | 0.0228 | 0.0392 |
+| 1,000 | 0.0049 | 0.0074 | 0.0222 |
+| 5,000 | 0.0034 | 0.0046 | 0.0139 |
+
+Training time: 2–3 s (`linear`), 8 s (`mlp`), 68–71 s (`oft`).
+
+**Takeaway:** the copy with OFT's head architecture matches the real model on Long from 100 queries too (96 vs. 94). The smaller copies need more data on Long than on Spatial (100 queries: `mlp` 72, `linear` 41), and all three are at the real model's level by 5,000. Data: `$VLA_DATA/extraction/libero_10/` (replacements, evals).
 
 ---
 
@@ -361,7 +387,7 @@ Model 1 can now stop after layer L (`model1.py` `depth`, `run_split_eval.py --tr
 
 Model 1 per query (`split/bench_depth.py`: median of 200 calls on real observations, depths interleaved; weights counted from the loaded parameters):
 
-| Llama layers kept | Spatial (ms) | Long (ms) | Model 1 weights (GB, bf16) |
+| Llama layers kept | Spatial (ms) | Long (ms) | Model 1 weights (GiB, bf16) |
 |---|---|---|---|
 | 32 (full) | 99.1 | 98.0 | 14.1 |
 | 28 | 90.9 | 89.6 | 12.6 |
@@ -372,7 +398,7 @@ Model 1 per query (`split/bench_depth.py`: median of 200 calls on real observati
 | 8 | 49.5 | 48.5 | 5.0 |
 | 0 (no Llama layers) | 33.0 | 32.0 | 2.0 |
 
-Each Llama layer costs ~2.06 ms and 0.39 GB. About 32–33 ms is fixed cost that no Llama layer removal touches (vision encoders, projector, preprocessing, output layer), which caps the possible saving at about two-thirds.
+Each Llama layer costs ~2.06 ms and 0.38 GiB (0.40 GB). About 32–33 ms is fixed cost that no Llama layer removal touches (vision encoders, projector, preprocessing, output layer), which caps the possible saving at about two-thirds.
 
 In closed loop (Spatial, 100 episodes each; the shared GPU adds ~1 ms of noise):
 
@@ -386,7 +412,7 @@ In closed loop (Spatial, 100 episodes each; the shared GPU adds ~1 ms of noise):
 
 Real model on these scenes: 95.
 
-Model 2 alone, per query (median of 200 calls; GPU in bf16, CPU in fp32, AMD Threadripper PRO 5955WX, one thread):
+Model 2 alone, per query (median of 200 calls; MLP head in bf16 on the GPU and fp32 on the CPU, linear map in fp32 on both; AMD Threadripper PRO 5955WX, one thread):
 
 | | GPU | One CPU thread |
 |---|---|---|
@@ -394,6 +420,24 @@ Model 2 alone, per query (median of 200 calls; GPU in bf16, CPU in fp32, AMD Thr
 | Linear map (0.2M) | 0.11 ms | 0.16 ms |
 
 Replacing only the head saves almost nothing on the GPU (0.4 ms of ~100 ms); the saving comes from dropping Llama layers. On one CPU thread, a stand-in for a TEE core, the linear map is ~380× cheaper than the MLP head, though both fit easily within the ~400 ms an action chunk lasts (8 steps at LIBERO's 20 Hz).
+
+### FLOPs per query (2026-11-18)
+
+`split/run_flops.sh` (`bench_flops.py`, `bench_flops_pi05.py`): PyTorch's FLOP counter on real forward passes, counting matrix multiplies, convolutions and attention (2 FLOPs per multiply-add; norms, activations and elementwise ops not counted). OFT on 10 real observations per suite (start 40 of every task), Model 1 shortened as in the closed loops above; π0.5 pads every input to the same length, so its count is fixed. Unlike the timings, these do not depend on our GPU.
+
+| Setup | Real model (TFLOPs) | With replacement (TFLOPs) | FLOPs saved (Spatial) | FLOPs saved (Long) | Time saved |
+|---|---|---|---|---|---|
+| OFT: linear map in place of the head (cut A) | 8.99 | 8.99 | 0.03% | 0.03% | 0.4% |
+| OFT: Model 1 stops at layer 24 + linear map | 8.99 | 6.99 | 22.2% | 22.2% | 14.8% |
+| π0.5: linear map in place of layer 18 + action expert | 4.71 | 4.41 | 6.4% | | 69–73% |
+| π0.5: small MLP in place of layer 18 + action expert | 4.71 | 4.41 | 6.4% | | |
+
+OFT per depth (Model 1 stops at layer L, + linear map; Spatial / Long TFLOPs, saved vs. the real model): 32: 8.99 / 8.97 (0.03%); 28: 7.99 / 7.97 (11.1%); 24: 6.99 / 6.98 (22.2%); 20: 5.99 / 5.98 (33.4%); 16: 4.99 / 4.98 (44.5%); 12: 3.99 / 3.99 (55.6%); 8: 3.00 / 2.99 (66.7%).
+
+- **OFT:** the MLP head is 0.03% of a query's FLOPs (2.4 GFLOPs of 8.99 TFLOPs); each Llama layer removed saves ~2.8%, and the vision encoders, projector and other fixed parts (~11%) remain at any depth. FLOPs saved exceed time saved (22% vs. 15% at layer 24): the parts that remain take a larger share of the time than of the FLOPs.
+- **π0.5:** most of the 6.4% is the last backbone layer, which the readout also skips; the action expert's 10 flow-matching steps over ~10 action tokens are only ~1.7% of the FLOPs. The 69–73% time saving therefore comes from per-operation overhead of the expert's many small steps in uncompiled PyTorch, not from arithmetic, which supports the caveat in §15 that the saving may be much smaller in a compiled deployment.
+
+Data: `$VLA_DATA/flops/` (`oft_libero_spatial.json`, `oft_libero_10.json`, `pi05.json`); dashboard rows from `dashboard/make_flops_data.py`.
 
 *Correction (2026-11-02):* the first version of this table gave 537 ms for the MLP head on CPU. That run kept the head in bf16, which this CPU has no native support for (no AVX-512 BF16 or AMX), so PyTorch fell back to a slow path. Re-timed in fp32 (`bench_depth.py` now does this): 60 ms, with actions within 0.0025 of the bf16 head's. The earlier claims of "~3,400× faster" and "too slow for real-time control" were wrong.
 
@@ -408,18 +452,21 @@ The linear map is refitted on only N observed queries: whole episodes from start
 | Layer 20 | 74 | 89 | 89 | 92 | 96 |
 | Layer 16 | 62 | 83 | 83 | 93 | 95 |
 
-| Long | 500 | 1,000 | 2,500 | 5,000 | All |
-|---|---|---|---|---|---|
-| Layer 32 (head only) | 87 | 94 | 94 | 91 | 93 |
-| Layer 20 | 67 | 78 | 84 | 86 | 92 |
+| Long | 100 | 500 | 1,000 | 2,500 | 5,000 | All |
+|---|---|---|---|---|---|---|
+| Layer 32 (head only) | 82 | 87 | 94 | 94 | 91 | 93 |
+| Layer 24 | 56 | 90 | 87 | 92 | 94 | 91 |
+| Layer 20 | – | 67 | 78 | 84 | 86 | 92 |
 
-Robot time: 100 queries ≈ 8 Spatial episodes (~40 s), 2,500 ≈ 190 episodes (~15 min).
+Long layer 24 (all budgets) and the head at N = 100 added 2026-11-21 (`run_linear_compute.sh long24`), so the final report's layer-24 readout has Long numbers; layer 20 was not run at N = 100.
+
+Robot time: 100 queries ≈ 8 Spatial episodes (~40 s), 2,500 ≈ 190 episodes (~17 min; 8 actions per query at 20 Hz).
 
 **Takeaways:**
 - Replacing only the head is extremely cheap: 100 observed queries already match the real model on Spatial.
 - Replacing more needs more observation. At 100 queries, layers 24/20/16 score 78/74/62; at 2,500 queries, all are within a few points of the real model.
-- Long needs several times more data: layer 20 is still at 86 after 5,000 queries and reaches 92 only with all ~13,600.
-- Overall: on Spatial, watching the model for roughly 15–30 minutes of operation is enough to replace the top 12 Llama layers plus the head with one linear map that makes each query 23% faster and Model 1 32% smaller. Across suites and under distribution shift, layer 24 (8 layers, ~15% faster) is the safer depth (§12, §13).
+- Long needs several times more data: the head scores 82 at 100 queries and 94 from 1,000; layer 24 scores 56 at 100, 87–92 from 500 to 2,500 and 94 at 5,000; layer 20 is still at 86 after 5,000 queries and reaches 92 only with all ~13,600.
+- Overall: on Spatial, watching the model for roughly 17–33 minutes of operation is enough to replace the top 12 Llama layers plus the head with one linear map that makes each query 23% faster and Model 1 32% smaller. Across suites, layer 24 (8 layers, ~15% faster) is the safer depth (§12); layer 20 is less robust under shift (§13), and layer 24 was not tested under shift.
 
 **Caveats:** one seed per point (±~3–5 per 100 episodes); a second subset draw (§12) moves results by up to 13 at 100 queries but ≤ 4 from 500; at small N some tasks may be missing from the observed episodes; latencies are on an RTX 4090 shared with other users' jobs (interleaving keeps the comparison fair).
 
@@ -456,12 +503,13 @@ Refit without starts 30–39 (λ on 40–49), tested on 30–39.
 |---|---|---|---|---|---|---|---|
 | Spatial, starts 30–39 (real 100) | 99 | 98 | 99 | 85 | 67 | 55 | 79 |
 | Spatial, starts 40–49 (real 95, §10) | 92 | 96 | 95 | 87 | 64 | 59 | 82 |
-| Long, starts 30–39 (real 94) | | 84 | 78 | | | | |
-| Long, starts 40–49 (real 94, §10) | | 92 | 82 | | | | |
+| Long, starts 30–39 (real 94) | 92 | 84 | 78 | | | | |
+| Long, starts 40–49 (real 94, §10) | 91 | 92 | 82 | | | | |
 
 - **Spatial replicates:** within noise of the real model down to layer 16, then the same fade.
 - **The layer-2 anomaly repeats** (79 vs 55 at layer 4).
 - **Long at layer 20 does not hold on these starts** (84 vs 94), so the earlier "Long holds to layer 20" was partly luck of the test set.
+- **Long at layer 24 does** (92 vs 94; added 2026-11-23, `split/run_long24_test30.sh`, same recipe: λ = 1e5 chosen on starts 40–49, 13,530 training queries, Model 1 truncated at 24). Layer 24 now replicates on both suites.
 
 ### Goal and Object
 
@@ -513,7 +561,7 @@ Setups: the real model; the linear map in place of the head (§8 fold 4); Model 
 | noise | 97 / 95 / 95 | 88 / 89 / 82 |
 
 - **The linear head is as robust as the real model:** within −2 to +3 of it under every shift on both suites.
-- **The layer-20 replacement is not:** it loses 14–15 points more than the real model when the camera moves, 6–16 when objects shift, and 2–7 under lighting and noise. The top Llama layers carry robustness that a linear readout from layer 20 does not reproduce, even where it matched the real model on the unperturbed scenes.
+- **The layer-20 replacement is not:** it scores 14–15 points below the real model when the camera moves, 6–16 below when objects shift, and 2–7 below under lighting and noise. The top Llama layers carry robustness that a linear readout from layer 20 does not reproduce, even where it matched the real model on the unperturbed scenes.
 
 **Caveats:** one perturbation strength per kind, 100 episodes per cell, one seed; Spatial and Long only.
 
@@ -543,7 +591,7 @@ Data: `$VLA_DATA/linear_compute/bench/tee_spatial.json`.
 
 ## 15. π0.5: reproduction and linear replacement of the action expert
 
-Repeats the §8 study on π0.5 (`pi05_libero`, openpi), whose action module is a ≈430M-parameter transformer (the "action expert": 311M in its transformer layers, 117M in the time conditioning (adaptive norms), 2M in the action projections; counted from the checkpoint, earlier written here as "300M") that builds each action chunk over 10 flow-matching steps from random noise, attending to the backbone's keys and values at every layer.
+Repeats the §8 study on π0.5 (`pi05_libero`, openpi), whose action module is a ≈430M-parameter transformer (the "action expert": 311M in its transformer layers, 119M in the time conditioning (117M adaptive norms, 2M time MLP), 0.07M in the action projections; counted from the checkpoint, earlier written here as "300M") that builds each action chunk over 10 flow-matching steps from random noise, attending to the backbone's keys and values at every layer.
 
 **Setup** (`split/pi05_server.py`, `split/run_pi05_eval.py`): openpi's PyTorch port, unmodified, in its own process and environment, run uncompiled. OFT's stock `run_episode` drives every episode (same env seed 0, wait steps, step limits, state and 180° image rotation); only the observation, the policy call and the action post-processing are π0.5's: images resized by openpi's own code on the server, the first 5 of 10 predicted actions executed, actions used as returned. Each query's noise comes from (seed 7, task, episode, query), so runs are reproducible from any starting episode.
 
@@ -607,7 +655,7 @@ All suites within ~1 pp of openpi's numbers, so the PyTorch port and our harness
 
 **Splits and leakage (audited 2026-11-05, all 20 π0.5 and all 20 OFT §8 fits):** in every fold the test starts (10f–10f+9) and validation starts ((f + 1) mod 5) are disjoint, and train + test queries equal all recorded queries of the suite, so no test query is ever fitted. Standardization and λ use training data only; the final map is refit on train + validation and never sees test data. Observed queries per fit: π0.5 Spatial ~8,500, Object ~11,400, Goal ~9,300, Long ~22,400 (one row of 35 outputs per query); OFT §8 Spatial ~5,300, Object ~7,100, Goal ~5,800, Long ~13,600 (8 rows of 7 outputs per query, one map shared across the 8 steps). Same rule for both (every recorded query of the 40 non-test starts per task); the counts differ because π0.5 queries every 5 steps and OFT every 8. Held out are initial states, not tasks: the 10 tasks appear in training. One caveat: π0.5's input (layer-18 input, 4 × 4 pooled) was chosen once on validation starts 0–9, which are fold 0's test starts. The choice was between three options and went to the option that was *not* best on those starts (the 5% size rule picked pooled over all tokens), so it did not favor fold 0. Fold 0's linear scores are 100 / 98 / 100 / 90 (Spatial / Object / Goal / Long); Spatial's 100 is its highest fold (others 97–98), within noise, and dropping fold 0 entirely gives −0.6 pp over the other 1,600 episodes (−0.8 pp with it).
 
-Object's loss is mostly two tasks: chocolate pudding (45 vs 50 of 50) and alphabet soup (44 vs 47); every other Object task is within one episode.
+Object's loss is mostly two tasks: chocolate pudding (45 vs 50 of 50) and alphabet soup (44 vs 47); one other task differs by two episodes (48 vs 50) and every other Object task by at most one.
 
 **Speed:** 59 ms per query alone (70 ms averaged over the CV runs, with a π0.5 server sharing the GPU) vs. 219 ms for π0.5: the map skips the last backbone layer and the expert's 10 denoising passes. Both measured in uncompiled PyTorch (compilation was turned off for run-to-run equality); the expert's 10 steps are many small operations, so much of its time may be per-operation overhead that compilation removes, and the saving may be smaller in a compiled deployment. Map: 2.4M parameters (67,584 × 35); π0.5: 3.6B.
 
@@ -717,11 +765,11 @@ Data: `$VLA_DATA/libero_plus/evals/<setup>/<suite>/` (one JSON per 250-task chun
 
 ## 17. Keeping the beginning or middle secret: can the attacker rebuild it?
 
-**Status:** complete (2026-11-13 to 11-16): attack 1 (public weights), attack 2 (LoRA refit) and the black-box case (replacements trained from scratch), Spatial and Long.
+**Status:** complete (2026-11-13 to 11-21): attack 1 (public weights), attack 2 (LoRA refit) and the black-box case (replacements trained from scratch), Spatial and Long, including layers 1–9, end-to-end fine-tuning and a second training seed at N = 5,000 for every block, and (11-21) the LoRA refit on layers 9–16 and 1–9.
 
 **Question:** §6–8 and §10–12 showed that keeping the top of OFT secret (the head, or the head plus top layers) does not protect it. What if the secret part is at the **beginning** (vision encoder, projector, first Llama layers) or in the **middle** (e.g. Llama layers 9–16)? The attacker owns the robot and runs every other part, so they see the secret part's input and output on every query, and the actions; they do not see its weights or internal activations.
 
-**Key fact:** OFT's LIBERO checkpoints are the public `openvla/openvla-7b` plus a merged rank-32 LoRA (openvla-oft `LIBERO.md`). Compared weight by weight (`split/public_diff.py`, Spatial checkpoint): each matrix we checked (all attention and MLP matrices of layers 1, 8, 16 and 32, the projector's first layer and one vision layer) is the public one plus a rank-32 change (96–99.9% of the change in its top 32 singular values). Relative change ||W_ft − W_pub|| / ||W_pub||: vision encoder 6%, projector 26%, Llama layers 10–17% (layers 1–16) rising to ~21% (layers 20–27); embeddings, final norm and `lm_head` unchanged. The proprio projector and the action head are new (no public version) and are never secret here.
+**Key fact:** OFT's LIBERO checkpoints are the public `openvla/openvla-7b` plus a merged rank-32 LoRA (openvla-oft `LIBERO.md`). Compared weight by weight (`split/public_diff.py`, Spatial checkpoint): each matrix we checked (all attention and MLP matrices of layers 1, 8, 16 and 32, the projector's first layer and one vision layer) is the public one plus a rank-32 change (94.5–99.9% of the change's energy in its top 32 singular values; 92.1–99.96% on the Long checkpoint). Relative change ||W_ft − W_pub|| / ||W_pub||: vision encoder 6%, projector 26%, Llama layers 10–17% (layers 1–16) rising to ~21% (layers 20–27); embeddings, final norm and `lm_head` unchanged. The proprio projector and the action head are new (no public version) and are never secret here.
 
 ### Attack 1: plug in the public weights (no data, no training)
 
@@ -731,6 +779,7 @@ Data: `$VLA_DATA/libero_plus/evals/<setup>/<suite>/` (one JSON per 250-task chun
 |---|---|---|
 | Llama layers 9–16 | 90 | 77 |
 | Llama layers 1–8 | 98 | 89 |
+| Llama layers 1–9 (added 2026-11-21) | 96 | 86 |
 | Llama layers 1–16 | 65 | 12 |
 | Vision encoder + projector | 72 | 6 |
 | Vision + projector + layers 1–8 | 30 | 0 |
@@ -744,7 +793,7 @@ Data: `$VLA_DATA/libero_plus/evals/<setup>/<suite>/` (one JSON per 250-task chun
 
 ### Attack 2: public weights + a LoRA fitted on recorded traffic
 
-`split/run_secret_lora.sh`, `split/fit_secret_lora.py`. The attacker records N queries of the secret part's input and output (all tokens; `run_split_eval.py --record_full`; Spatial starts 0–39, 5,303 queries; Long starts 0–19, 6,713 queries; none from the test starts 40–49; the recording runs scored 395/400 and 188/200), then fits a rank-32 LoRA (α 16, as OFT's fine-tune) on the public weights of every linear layer in the secret part, minimizing the per-feature-scaled squared error between its output and the recorded output (AdamW lr 5e-4, 1,500 steps of 8 queries, cosine; same recipe for every N, no tuning). Check: the training forward pass with the fine-tuned weights reproduces the recorded outputs bitwise for all three secret parts. Secret parts: the three where attack 1 failed most (Long 0–12). Layers 9–16 and 1–8 were not refitted.
+`split/run_secret_lora.sh`, `split/fit_secret_lora.py`. The attacker records N queries of the secret part's input and output (all tokens; `run_split_eval.py --record_full`; Spatial starts 0–39, 5,303 queries; Long starts 0–19, 6,713 queries; none from the test starts 40–49; the recording runs scored 395/400 and 188/200), then fits a rank-32 LoRA (α 16, as OFT's fine-tune) on the public weights of every linear layer in the secret part, minimizing the per-feature-scaled squared error between its output and the recorded output (AdamW lr 5e-4, 1,500 steps of 8 queries, cosine; same recipe for every N, no tuning). Check: the training forward pass with the fine-tuned weights reproduces the recorded outputs bitwise for all three secret parts. Secret parts: the three where attack 1 failed most (Long 0–12); added 2026-11-21 (`split/run_secret_lora_more.sh`, same recipe): layers 9–16 (recorded at layers 8/16) and layers 1–9 (the black box's layer-9 recording, `record9`), to match the black-box blocks. Layers 1–8 alone were not refitted (the paper uses 1–9).
 
 Successes out of 100, held-out starts 40–49 (real model 95 Spatial, 94 Long; attack 1 = public weights, no training):
 
@@ -753,24 +802,30 @@ Successes out of 100, held-out starts 40–49 (real model 95 Spatial, 94 Long; a
 | Llama layers 1–16 | 65 | **95** | 96 | 97 | 12 | 86 | **92** | 91 |
 | Vision encoder + projector | 72 | **98** | 97 | 97 | 6 | 90 | **93** | 95 |
 | Vision + projector + layers 1–8 | 30 | **97** | 95 | 97 | 0 | 88 | **91** | 92 |
+| Llama layers 9–16 (11-21) | 90 | **96** | 97 | 96 | 77 | 90 | **94** | 92 |
+| Llama layers 1–9 (11-21) | 96 | **98** | 98 | 98 | 86 | 93 | **94** | 92 |
 
-Error of the secret part's output on 200 held-out recorded queries (squared error per feature, scaled by the feature's spread; 1 ≈ no better than a constant):
+Error of the secret part's output on 200 held-out recorded queries (drawn query by query from the same training-start recordings, never trained on; squared error per feature, scaled by the feature's spread; 1 ≈ no better than a constant):
 
 | Secret part | Spatial: public → N = 100 → 5,000 | Long: public → N = 100 → 5,000 |
 |---|---|---|
 | Layers 1–16 | 0.27 → 0.024 → 0.012 | 0.40 → 0.046 → 0.026 |
 | Vision + projector | 0.88 → 0.099 → 0.052 | 0.92 → 0.125 → 0.066 |
 | Vision + projector + 1–8 | 0.41 → 0.039 → 0.020 | 0.54 → 0.066 → 0.035 |
+| Layers 9–16 (11-21) | 0.12 → 0.017 → 0.009 | 0.15 → 0.031 → 0.017 |
+| Layers 1–9 (11-21) | 0.12 → 0.002 → 0.001 | 0.20 → 0.003 → 0.002 |
 
-Fit time on one RTX 4090: ~15 min (layers 1–16), ~40 min (vision), ~45 min (vision + layers 1–8).
+Fit time on one RTX 4090: 17.6–21.3 min (layers 1–16), 39.2–41.0 min (vision), 44.9–48.2 min (vision + layers 1–8); 9–12 min (layers 9–16, 1–9; 11-21).
 
 ### Takeaways
 
-- **No secret part tested protects OFT.** With 100 observed queries (under a minute of robot time) and a 15–45 minute fit, every repaired part matches the real model on Spatial (95–98 vs. 95); on Long, 100 queries give 86–90 and 1,000 give 91–93 (real 94), within ~3 points.
+- **No secret part tested protects OFT.** With 100 observed queries (under a minute of robot time) and a 9–48 minute fit, every repaired part matches the real model on Spatial (95–98 vs. 95); on Long, 100 queries give 86–93 and 1,000 give 91–94 (real 94), within ~3 points (all five parts; the paper's four parts, without vision + 1–8: 86–93 and 92–94, fits 9–41 min).
 - **The reason is the public starting point.** OFT is `openvla-7b` + a rank-32 change, so the attacker only has to recover a small low-rank correction, and the secret part's output gives them a rich target (every token's hidden state, not just 7 action numbers). Parts that the free swap broke (Long 0–12) are mostly repaired from 100 queries (Long 86–90) and to within ~3 points from 1,000.
 - **Together with §6–12:** keeping the top (head or top layers), the middle (layers 9–16: public weights alone give 90 / 77) or the beginning (vision encoder, early layers) secret all fail, at ~100–1,000 observed queries. For a model fine-tuned from public weights, hiding part of it is not a protection on its own; what would have to stay secret is something not derivable from public weights plus a little observed traffic. Without public weights, see the black-box results below.
 
-**Caveats:** one seed, 100 episodes per cell (±~3–5); one fit per cell with one recipe (an attacker could only do better); OFT only, Spatial and Long; attack 2 was run only on the three parts where attack 1 failed most, not on layers 9–16 or 1–8 or other blocks.
+- **Layers 9–16 and 1–9 (added 2026-11-21):** the same LoRA recipe repairs both. Spatial 96–98 from 100 queries (public weights alone: 90 and 96); Long 90 and 93 from 100 queries and 94 / 94 from 1,000 (public alone: 77 and 86; real 94). So every block also attacked from scratch (9–16, 1–9, 1–16) is rebuilt to within ~3 points from ≤ 1,000 queries when public weights are available. The layers 1–9 output error after fitting is ~10× lower than for the other parts in the scaled MSE (0.002 vs. 0.017–0.024 at N = 100), though not in relative error, where 1–9 and 9–16 end equal (0.0081 vs. 0.0078; public 0.105 vs. 0.021).
+
+**Caveats:** one seed, 100 episodes per cell (±~3–5); one fit per cell with one recipe (an attacker could only do better); OFT only, Spatial and Long; not run on layers 1–8 alone (the paper uses 1–9) or other blocks.
 
 ### Black box: no public weights, replacement trained from scratch
 
@@ -808,16 +863,78 @@ Error of the block's output on the 200 report queries (scaled squared error; ide
 | Secret block | Identity | Linear | MLP | 2-layer | 4-layer |
 |---|---|---|---|---|---|
 | 9–16, Spatial / Long | 0.50 / 0.58 | 0.18 / 0.27 | 0.15 / 0.23 | 0.083 / 0.14 | 0.074 / 0.13 |
-| 1–16, Spatial / Long | 0.65 / 0.77 | 0.28 / 0.38 | 0.24 / 0.33 | 0.097 / 0.16 | 0.086 / 0.15 |
+| 1–16, Spatial / Long | 0.65 / 0.77 | 0.27 / 0.38 | 0.24 / 0.33 | 0.097 / 0.16 | 0.086 / 0.15 |
 
 Fit time (N = 5,000, one RTX 4090): ~8 min (linear, MLP), ~27 min (2-layer), ~50 min (4-layer).
 
 - **Even without public weights, a secret middle block is rebuilt.** A 2-layer transformer trained from scratch on 1,000 observed queries replaces layers 9–16 on Spatial (96 vs. 95); with 5,000, Spatial 99 and Long 92–93 (real 94). It has a quarter of the block's parameters. This beats the attacker's other option, skipping the block and reading actions from layer 8 (64–77 on Spatial, §12).
-- **Layers 1–16 hold up better, but not fully.** With 5,000 queries a 2-layer transformer reaches 91 on Spatial and 80 on Long (−14), and the curve is still rising (Long 0 → 71 → 80). So 16 secret layers cost the attacker more data than 8, but at this budget the robot already works most of the time.
+- **Layers 1–16 hold up better, but not fully.** With 5,000 queries a 2-layer transformer reaches 91 on Spatial and 80 on Long (−14), and on Long the curve is still rising (0 → 71 → 80). A second training seed gives 84 (Spatial) and 63 (Long), and 3× longer training does not help (Spatial 71; follow-up below). Fine-tuned end to end, layers 1–16 at N = 5,000 reach 98–100 on Spatial and 79–89 on Long (both sizes, two seeds). So 16 secret layers cost the attacker more data than 8, but at this budget the robot already works most of the time.
 - **Per-token maps (linear, MLP) never work for layers 1–16** (0 everywhere) and only partly for 9–16 (63–79). OFT zeroes the input embeddings of the 56 action positions, so at layer 0 they are identical for every query: a per-token map gives them a constant, and their content has to come from other tokens through attention, which only the transformers have. By layer 8 the action positions already carry some of it. Dropping either block makes the robot fail (0–12).
-- **Compared with the public-base case (same block, layers 1–16):** with public weights + LoRA, 100 queries give Spatial 95 and 1,000 give Long 92; from scratch, 5,000 queries give Spatial 91 and Long 80. Unpublished weights raise the data the attacker needs by well over an order of magnitude for this block, and at our largest budget the rebuild is still 4–14 points short, but it already works most of the time. For layers 9–16 (no LoRA run), public weights alone give 90 / 77 and a from-scratch rebuild reaches 96 / 82 at 1,000 queries and 99 / 92 at 5,000.
+- **Compared with the public-base case (same block, layers 1–16):** with public weights + LoRA, 100 queries give Spatial 95 and 1,000 give Long 92; from scratch, 5,000 queries give Spatial 91 and Long 80. Unpublished weights raise the data the attacker needs by well over an order of magnitude for this block, and at our largest budget the rebuild is still 4–14 points short, but it already works most of the time. For layers 9–16, public weights alone give 90 / 77 (with LoRA from 1,000 queries: 97 / 94) and a from-scratch rebuild reaches 96 / 82 at 1,000 queries and 99 / 92 at 5,000.
 
-**Caveats:** one seed, 100 episodes per cell (±~3–5); one untuned recipe per replacement. The best training step was usually the last one (10,000), and λ for layers 1–16 sat at the edge of its grid, so longer training or more data would likely do better; these are lower bounds on what an attacker achieves. The vision encoder was not tested from scratch.
+**Caveats:** one seed here (a second at N = 5,000 below), 100 episodes per cell (±~3–5); one untuned recipe per replacement. The best training step was usually the last one (10,000), and λ for layers 1–16 sat at the edge of its grid, which suggested longer training or more data would do better; the follow-up below did not confirm this for layers 1–16 (Spatial, all 5,103 queries, 30k steps: 2-layer 71 vs. 91). The vision encoder was not tested from scratch (a few fits were trained, then dropped without a closed-loop run).
+
+### Black-box follow-up: layers 1–9, end-to-end fine-tuning and a second seed (2026-11-18 to 11-21)
+
+`split/run_blackbox_more.sh`, `run_blackbox_fill.sh`, `run_blackbox_e2e.sh`, `run_blackbox_19.sh`, `run_blackbox_e2e16.sh`, `run_blackbox_seed1.sh`; `split/fit_blackbox.py` (`--seed`, `--steps`), `split/fit_blackbox_e2e.py`, `split/diagnose_blackbox.py`, `split/attribute_blackbox.py`, `split/check_record_actions.py`. Questions (user): does a secret block that starts at the input and ends earlier (layers 1–9) protect better; are the fits repeatable; does longer training help. Layer 9 was re-recorded from the same training starts (`$VLA_DATA/blackbox/record9`; same query files as the attack-2 recording, identical input embeddings on the 50 checked).
+
+**Two training methods.** *Simple:* as above (per-feature scaled squared error at the block's output, 10,000 steps, best step on 20% of the N queries). *End to end:* start from the simple fit and fine-tune it through the attacker's own frozen copy of layers b+1–32, final norm and action head, so the model's actions match the actions the robot executed on the recorded queries (loss: L1 on normalized actions + the simple loss at the block output as an anchor; 3,000 steps of 4 queries, lr 5e-5, best step by action L1 on the same 20% selection queries; 8-bit AdamW for the 4-layer replacement to fit 24 GB). It uses only what the attacker has (later layers, head, executed actions), but more than the secret part's own input and output. Only for blocks starting at layer 1 (the queries start from the recorded LLM input).
+
+Successes out of 100, held-out starts 40–49 (real model: Spatial 95, Long 94). Simple → end to end; seed 0.
+
+| Secret block | Replacement | N | Spatial | Long |
+|---|---|---|---|---|
+| Layers 1–9 | identity (dropped) | 0 | 0 | — |
+| | 2-layer | 100 | 52 → 70 | 62 → 61 |
+| | | 1,000 | 76 → **97** | 91 → 82 |
+| | | 5,000 | 16 → **98** | 75 → 89 |
+| | 4-layer | 100 | 11 → 67 | 70 → 70* |
+| | | 1,000 | 66 → **97** | 85 → 85* |
+| | | 5,000 | 92 → **99** | 85 → **95** |
+| Layers 1–16 | 2-layer | 100 | 0 → 30 | 0 → 0 |
+| | | 1,000 | 87 → 87* | 71 → 71* |
+| | | 5,000 | 91 → **98** | 80 → 89 |
+| | 4-layer | 100 | 32 → 32* | 0 → 2 |
+| | | 1,000 | 76 → 89 | 52 → 63 |
+| | | 5,000 | 89 → **98** | 73 → 83 |
+
+\* best step 0: the fine-tune never beat its starting fit on the selection queries, so the saved replacement is the simple fit and the two closed loops run the same model (same scores). Layers 1–16 at N = 100 were fine-tuned end to end on 2026-11-21/22 for completeness (`run_blackbox_e2e16.sh n100`).
+
+- **With the simple loss, early blocks are unreliable.** Layers 1–9 on Spatial range from 11 to 92 across sizes, N and seeds, and more data or training can make them worse (2-layer: 76 at N = 1,000, 16 at 5,000; 13 with all 5,103 queries and 30,000 steps). A second training seed moves them by up to 39 points (table below). Longer training does not help: with all 5,103 Spatial queries and 30,000 steps (2-layer), layers 9–16 stay at 99 while layers 1–16 fall from 91 to 71.
+- **Why (Spatial diagnosis, open loop on the 200 report queries):** each replacement's action error with the rest of the real model predicts closed-loop success (Spearman −0.80 over 19 fits); its overall relative error at the block output does not (−0.17), nor does its training-loss error on those queries (+0.05). The 56 action positions enter the LLM as zeros and are still small after layer 9 (0.18 in the loss's units vs. 0.59 after layer 16), so the simple loss barely sees them. Splicing the replacement's output into the real block's on one token group at a time shows the damage is spread over image patches, action positions and prompt tokens; failing fits are ~3× worse on the action positions and ~2× on the prompt than working ones. Two reweighted losses failed: per-token relative error (1–9 2-layer N = 5,000: much lower offline error, 0/100) and extra weight on the action positions (action error 0.13 → 0.29, not run in closed loop). The simple loss stays the main method; matching layer 9 is a weak stand-in for matching the actions.
+- **End to end fixes layers 1–9 on Spatial:** 97–99 in all six runs with ≥ 1,000 queries (both sizes; at N = 5,000 both seeds), whatever the starting fit (16 to 92). On Long 1–9 it helps at N = 5,000 (75 → 89, 85 → 95) but not at 1,000 (91 → 82, 85 → 85*). With 100 queries it does not help much (Spatial 52 → 70, 11 → 67; Long 61–70): it fixes the training target, not too little data.
+- **Layers 1–16 end to end:** Spatial reaches 98 at N = 5,000 with both sizes (from 91 / 89); Long 89 and 83 (from 80 / 73; real 94), so Long 1–16 stays 5–11 points short at 5,000 queries. For the Long 2-layer fit the open-loop action error on the 200 report queries did not change (0.0374 → 0.0378), so part of its +9 may be noise. At N = 1,000 the gain is smaller (Spatial 76 → 89; Long 52 → 63; two fits did not move). At N = 100 layers 1–16 are not rebuilt: Spatial 0 → 30 (2-layer) and 32 → 32* (4-layer), Long 0 → 0 and 0 → 2.
+- **Recorded actions check:** the end-to-end targets are the executed actions saved during recording. Replaying 1,000 random recorded queries per suite through the real model gives the same gripper command on all but 5 of 8,000 actions (Long) and 3 of 8,000 (Spatial); over all 8,000 replayed actions, 5 (Long) and 1 (Spatial) raw gripper outputs lie within 0.05 of the 0.5 threshold. Arm actions differ by at most 0.06 (Long) / 0.08 (Spatial). The targets are sound (`$VLA_DATA/blackbox/record_check_<suite>.json`).
+
+### Second training seed at N = 5,000
+
+`split/run_blackbox_seed1.sh` (finished 2026-11-21, no failures): every N = 5,000 cell refit with `--seed 1` (training init and batch order; same data subset), then for blocks starting at layer 1 fine-tuned end to end from the seed-1 fit with the same settings. Successes out of 100, held-out starts 40–49 (real model: Spatial 95, Long 94); each cell is seed 0 / seed 1.
+
+| Secret block | Replacement | Spatial: simple | Spatial: end to end | Long: simple | Long: end to end |
+|---|---|---|---|---|---|
+| Layers 9–16 | 2-layer | 99 / 98 | — | 92 / 91 | — |
+| | 4-layer | 97 / 97 | — | 93 / 92 | — |
+| Layers 1–16 | 2-layer | 91 / 84 | 98 / 98 | 80 / 63 | 89 / 87 |
+| | 4-layer | 89 / 87 | 98 / 100 | 73 / 77 | 83 / 79 |
+| Layers 1–9 | 2-layer | 16 / 51 | 98 / 99 | 75 / 43 | 89 / 92 |
+| | 4-layer | 92 / 53 | 99 / 97 | 85 / 76 | 95 / 92 |
+
+- **Layers 9–16 are stable** (within 1 point between seeds).
+- **Simple fits of blocks starting at layer 1 are not:** the seed moves them by up to 39 points on Spatial (1–9 4-layer 92 → 53) and 32 on Long (1–9 2-layer 75 → 43).
+- **End to end is stable:** the two seeds differ by at most 4 points (Spatial 97–100, Long 79–95), whatever the starting fit. On Long, layers 1–16 end to end stay 5–15 points below the real model with both seeds.
+
+**Caveats:** one seed except at N = 5,000 (two), 100 episodes per cell (±~3–5); the end-to-end fine-tune and the rejected loss variants were designed after seeing closed-loop results on the test starts 40–49; the diagnosis was done on Spatial only.
+
+### Fresh-start check of the end-to-end fix (2026-11-24)
+
+`split/run_blackbox_fresh30.sh`: the end-to-end fix was designed after seeing one run on test starts 40–49 (1–9 tf2 N = 5,000), so we re-ran the unchanged recipe on starts it never saw. Layers 1–9, 2-layer, N = 1,000, Spatial, fitted only on recorded starts 0–29 (3,941 queries), tested on starts 30–39 (real model 100, §12).
+
+| Replacement | Starts 30–39 (fresh) | Starts 40–49 (original) |
+|---|---|---|
+| End to end | **100** | 97 |
+| Simple (reconstruction only) | 98 | 76 |
+
+The fix replicates on fresh starts. The simple fit also did well here, consistent with its seed-to-seed spread (11–92 elsewhere), so this one cell does not show the fix was needed; that comes from the runs above. Data: `$VLA_DATA/blackbox/fits_fresh30/`, `$VLA_DATA/blackbox/evals_fresh30/`.
 
 **Reference check (2026-11-16):** the real model rerun on starts 40–49 with the current code reproduces the references exactly (Spatial 95, Long 94; identical per-episode outcomes and query counts), so the code added for these attacks does not change the real model.
 
