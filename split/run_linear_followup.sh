@@ -41,8 +41,6 @@ ridge() {  # out ridge_head-args (GPU, CPU fallback)
     python "$VLA_ROOT/split/ridge_head.py" --device cpu "$@" --out "$out_dir" 2>&1 | grep -E '^ridge|Traceback|Error' | grep '^ridge'
 }
 
-# Wait for run_linear_compute.sh
-until tail -1 "$VLA_LOGS/linear_compute.log" | grep -q 'ALL DONE'; do sleep 120; done
 
 log "A. small MLP readout at deep layers"
 for job in "libero_spatial 5000 16 12 8 4" "libero_10 13000 16 12 8"; do

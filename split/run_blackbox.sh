@@ -44,13 +44,11 @@ run() { fit "$@" && eval_run "$@" || log "FAILED $*"; }
 for suite in libero_spatial libero_10; do
     [ -f "$RECORD/$suite/.done" ] || { log "no recording for $suite"; continue; }
     for blk in "${BLOCKS[@]}"; do
-        # shellcheck disable=SC2086
         run "$suite" $blk identity 0
     done
     for n in $NS; do
         for blk in "${BLOCKS[@]}"; do
             for kind in $KINDS; do
-                # shellcheck disable=SC2086
                 run "$suite" $blk "$kind" "$n"
             done
         done

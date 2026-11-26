@@ -23,8 +23,6 @@ mlp_run() {  # suite fold
         2>&1 | grep -E '^Success|Traceback|Error')
 }
 
-# Wait for the depth sweep
-until grep -q 'ALL DONE' "$VLA_LOGS/linear_layers.log" 2>/dev/null; do sleep 300; done
 
 for suite in libero_spatial libero_10 libero_goal libero_object; do
     for f in 1 2 3 4; do

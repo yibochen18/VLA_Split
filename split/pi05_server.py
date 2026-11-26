@@ -26,9 +26,9 @@ from openpi_client import image_tools
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pi05_protocol import ACTION_SHAPE, MAGIC_END, MAGIC_QUERY, MAGIC_STATS, actions_to_bytes, encode_response, read_request  # noqa: E402
-from ridge_pi05 import STEPS, features  # noqa: E402
-from mlp_pi05 import MLPMap  # noqa: E402
+from pi05_protocol import ACTION_SHAPE, MAGIC_END, MAGIC_QUERY, MAGIC_STATS, actions_to_bytes, encode_response, read_request
+from ridge_pi05 import STEPS, features
+from mlp_pi05 import MLPMap
 
 RESIZE = 224  # openpi's LIBERO client resize
 ACTION_DIM = 7
@@ -118,7 +118,7 @@ class ReadoutPolicy:
         images, img_masks, lang_tokens, lang_masks, _ = model._preprocess_observation(_model.Observation.from_dict(inputs), train=False)
         prefix_embs, pad_masks, att_masks = model.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         att_4d = model._prepare_attention_masks_4d(make_att_2d_masks(pad_masks, att_masks))
-        model.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        model.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
         try:
             model.paligemma_with_expert.forward(attention_mask=att_4d, position_ids=torch.cumsum(pad_masks, dim=1) - 1,
                                                 past_key_values=None, inputs_embeds=[prefix_embs, None], use_cache=True)

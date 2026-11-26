@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copying Model 2 on LIBERO-Long (RESULTS §6). Run on GPU 1.
+# Copying Model 2 on LIBERO-Long (RESULTS §6).
 source "$(dirname "$0")/../env.sh" && vla_activate
 set -o pipefail
 SUITE=libero_10

@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import paths  # noqa: E402
-from pi05_cv_summary import mcnemar_p  # noqa: E402
+import paths
+from pi05_cv_summary import mcnemar_p
 
 ROOT = paths.DATA / "libero_plus"
 CLASSIFICATION = paths.REPO / "LIBERO-plus/libero/libero/benchmark/task_classification.json"

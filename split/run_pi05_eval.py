@@ -23,12 +23,12 @@ from libero.libero import benchmark
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-from experiments.robot.libero.libero_utils import get_libero_env, get_libero_image, get_libero_wrist_image, quat2axisangle  # noqa: E402
-from experiments.robot.robot_utils import set_seed_everywhere  # noqa: E402
-import paths  # noqa: E402
-import liberoplus_prompts  # noqa: E402
-from pi05_protocol import MAGIC_END, MAGIC_STATS, actions_from_bytes, encode_request, read_response  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+from experiments.robot.libero.libero_utils import get_libero_env, get_libero_image, get_libero_wrist_image, quat2axisangle
+from experiments.robot.robot_utils import set_seed_everywhere
+import paths
+import liberoplus_prompts
+from pi05_protocol import MAGIC_END, MAGIC_STATS, actions_from_bytes, encode_request, read_response
 
 REPLAN_STEPS = 5  # actions executed per query, as in openpi's LIBERO client
 SPLIT_DIR = Path(__file__).resolve().parent

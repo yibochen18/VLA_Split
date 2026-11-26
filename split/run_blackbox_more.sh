@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Black-box follow-up (RESULTS §17): longer training, all queries, and layers 1-9.
+# Black-box follow-up (RESULTS §17): longer training, all queries, and layers 1-9. Only partly run (stopped once the end-to-end fix worked); RESULTS §17 lists the runs that finished.
 source "$(dirname "$0")/../env.sh" && vla_activate
 set -o pipefail
 ROOT=$VLA_DATA/blackbox
@@ -69,7 +69,6 @@ for suite in libero_spatial libero_10; do
     nmax=$(( $(ls "$RECORD/$suite" | grep -c '\.pt$') - 200 ))
     for kind in tf8 tf2; do
         for blk in "9 16" "1 16"; do
-            # shellcheck disable=SC2086
             run "$suite" $blk "$kind" "$nmax" 30000 "$RECORD/$suite"
         done
     done

@@ -71,12 +71,10 @@ for suite in libero_spatial libero_10; do
     for blk in "1 9" "1 16" "9 16"; do
         for n in 1000 5000 100; do
             for kind in tf2 tf4 linear mlp; do
-                # shellcheck disable=SC2086
                 run $suite $blk $kind $n 10000
             done
         done
         for kind in tf2 tf8; do
-            # shellcheck disable=SC2086
             run $suite $blk $kind "$nmax" 30000
         done
     done

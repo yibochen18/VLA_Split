@@ -26,8 +26,6 @@ run() {  # suite init-tag n record_dir
 
 S=libero_spatial
 run $S L1-9_tf2_n5000_seed1 5000 "$ROOT/record9/$S"
-run $S L1-9_tf4_n5000_seed1 5000 "$ROOT/record9/$S"
-run $S L1-9_tf4_n5000 5000 "$ROOT/record9/$S"
 run $S L1-9_tf2_n1000 1000 "$ROOT/record9/$S"
 run libero_10 L1-16_tf2_n5000 5000 "$VLA_DATA/secret_lora/record/libero_10"
 log "all done"

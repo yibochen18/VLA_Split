@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# π0.5 baselines (P4): 500 episodes per suite, recording the backbone states and actions of every query.
+# π0.5 baselines: 500 episodes per suite, recording the backbone states and actions of every query.
 source "$(dirname "$0")/../env.sh" && vla_activate
 ROOT=$VLA_DATA/pi05
 

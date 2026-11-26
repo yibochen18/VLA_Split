@@ -22,7 +22,7 @@ Running record of measured results for the OpenVLA-OFT split project.
 | Model | OpenVLA-OFT, one released checkpoint per suite (`moojink/openvla-7b-oft-finetuned-libero-{spatial,object,goal,10}`) |
 | Eval config | Script defaults: 2 images (third-person + wrist), proprio, L1-regression head, center crop, 8-step chunks executed open-loop |
 | Software | Python 3.10, PyTorch 2.2.0 (cu121), transformers 4.40.1 (OFT fork), robosuite 1.4.1, MuJoCo 3.3.0 |
-| Differences from paper | RTX 4090 vs. A100; MuJoCo 3.3.0; one seed (7) vs. 3 seeds averaged |
+| Differences from the OFT paper | RTX 4090 vs. A100; MuJoCo 3.3.0; one seed (7) vs. 3 seeds averaged |
 
 ---
 
@@ -38,7 +38,7 @@ Running record of measured results for the OpenVLA-OFT split project.
 | Long (LIBERO-10) | **93.8%** (469/500) | 94.5% | −0.7 | 31 |
 | **Average** | **97.05%** | **97.1%** | −0.05 | 59 |
 
-**Conclusion:** all four suites are within about 1 pp of the paper, i.e. within noise, and the averages match (97.05% vs. 97.1%). The released checkpoints reproduce on this server and software stack. **Step 1 checkpoint passed.**
+**Conclusion:** all four suites are within about 1 pp of the OFT paper, i.e. within noise, and the averages match (97.05% vs. 97.1%). The released checkpoints reproduce on this server and software stack.
 
 ### Tasks below 100% (out of 50 episodes each)
 
@@ -150,9 +150,13 @@ Paths are relative to `$VLA_DATA` (set in `env.sh`; `/mnt/ssd/yibo` on our serve
 ```bash
 # edit env.sh first if not on our server
 bash setup_and_smoke_test.sh                     # environment (one-time)
-bash split/run_baselines.sh                      # Object, Goal, Long baselines (Spatial: PROCESS.md §1.1)
+bash split/run_baselines.sh                      # Object, Goal, Long baselines (Spatial: README, "Running on LIBERO" step 1)
 source env.sh && vla_activate && cd openvla-oft
 python ../split/probe_baseline.py            # reference dataset, latency, determinism
+python ../split/export_model2.py --suite libero_spatial libero_object libero_goal libero_10
+python ../split/verify_offline.py --reference $VLA_REFERENCE/libero_spatial_seed7_1ep.pt                       # V1a/V1b/V2
+python ../split/run_split_eval.py --episodes_per_task 1 --reference $VLA_REFERENCE/libero_spatial_seed7_1ep.pt  # V3, Spatial
+bash ../split/run_v3_all.sh                  # V3, other suites
 ```
 
 The later experiments each name their script in their section; README.md lists them in order.
@@ -437,7 +441,7 @@ OFT per depth (Model 1 stops at layer L, + linear map; Spatial / Long TFLOPs, sa
 - **OFT:** the MLP head is 0.03% of a query's FLOPs (2.4 GFLOPs of 8.99 TFLOPs); each Llama layer removed saves ~2.8%, and the vision encoders, projector and other fixed parts (~11%) remain at any depth. FLOPs saved exceed time saved (22% vs. 15% at layer 24): the parts that remain take a larger share of the time than of the FLOPs.
 - **π0.5:** most of the 6.4% is the last backbone layer, which the readout also skips; the action expert's 10 flow-matching steps over ~10 action tokens are only ~1.7% of the FLOPs. The 69–73% time saving therefore comes from per-operation overhead of the expert's many small steps in uncompiled PyTorch, not from arithmetic, which supports the caveat in §15 that the saving may be much smaller in a compiled deployment.
 
-Data: `$VLA_DATA/flops/` (`oft_libero_spatial.json`, `oft_libero_10.json`, `pi05.json`); dashboard rows from `dashboard/make_flops_data.py`.
+Data: `$VLA_DATA/flops/` (`oft_libero_spatial.json`, `oft_libero_10.json`, `pi05.json`).
 
 *Correction (2026-11-02):* the first version of this table gave 537 ms for the MLP head on CPU. That run kept the head in bf16, which this CPU has no native support for (no AVX-512 BF16 or AMX), so PyTorch fell back to a slow path. Re-timed in fp32 (`bench_depth.py` now does this): 60 ms, with actions within 0.0025 of the bf16 head's. The earlier claims of "~3,400× faster" and "too slow for real-time control" were wrong.
 
@@ -458,7 +462,7 @@ The linear map is refitted on only N observed queries: whole episodes from start
 | Layer 24 | 56 | 90 | 87 | 92 | 94 | 91 |
 | Layer 20 | – | 67 | 78 | 84 | 86 | 92 |
 
-Long layer 24 (all budgets) and the head at N = 100 added 2026-11-21 (`run_linear_compute.sh long24`), so the final report's layer-24 readout has Long numbers; layer 20 was not run at N = 100.
+Long layer 24 (all budgets) and the head at N = 100 added 2026-11-21 (`run_linear_compute.sh long24`); layer 20 was not run at N = 100.
 
 Robot time: 100 queries ≈ 8 Spatial episodes (~40 s), 2,500 ≈ 190 episodes (~17 min; 8 actions per query at 20 Hz).
 
@@ -513,10 +517,11 @@ Refit without starts 30–39 (λ on 40–49), tested on 30–39.
 
 ### Goal and Object
 
-Recorded with `--record_layers 24 20 16`; the recording runs reproduced the baselines (488/500, 491/500). Fitted as in §10.
+Recorded with `--record_layers 24 20 16` (layer 28: `split/run_linear_l28_goal_object.sh`, a separate recording); the recording runs reproduced the baselines (488/500, 491/500, both times). Fitted as in §10.
 
 | Layer | Goal (real 100) | Object (real 99) | Goal / Object held-out L1 |
 |---|---|---|---|
+| 28 | 97 | 97 | 0.014 / 0.013 |
 | 24 | 95 | 97 | 0.018 / 0.017 |
 | 20 | 89 | 90 | 0.026 / 0.025 |
 | 16 | 86 | 93 | 0.032 / 0.031 |
@@ -793,7 +798,7 @@ Data: `$VLA_DATA/libero_plus/evals/<setup>/<suite>/` (one JSON per 250-task chun
 
 ### Attack 2: public weights + a LoRA fitted on recorded traffic
 
-`split/run_secret_lora.sh`, `split/fit_secret_lora.py`. The attacker records N queries of the secret part's input and output (all tokens; `run_split_eval.py --record_full`; Spatial starts 0–39, 5,303 queries; Long starts 0–19, 6,713 queries; none from the test starts 40–49; the recording runs scored 395/400 and 188/200), then fits a rank-32 LoRA (α 16, as OFT's fine-tune) on the public weights of every linear layer in the secret part, minimizing the per-feature-scaled squared error between its output and the recorded output (AdamW lr 5e-4, 1,500 steps of 8 queries, cosine; same recipe for every N, no tuning). Check: the training forward pass with the fine-tuned weights reproduces the recorded outputs bitwise for all three secret parts. Secret parts: the three where attack 1 failed most (Long 0–12); added 2026-11-21 (`split/run_secret_lora_more.sh`, same recipe): layers 9–16 (recorded at layers 8/16) and layers 1–9 (the black box's layer-9 recording, `record9`), to match the black-box blocks. Layers 1–8 alone were not refitted (the paper uses 1–9).
+`split/run_secret_lora.sh`, `split/fit_secret_lora.py`. The attacker records N queries of the secret part's input and output (all tokens; `run_split_eval.py --record_full`; Spatial starts 0–39, 5,303 queries; Long starts 0–19, 6,713 queries; none from the test starts 40–49; the recording runs scored 395/400 and 188/200), then fits a rank-32 LoRA (α 16, as OFT's fine-tune) on the public weights of every linear layer in the secret part, minimizing the per-feature-scaled squared error between its output and the recorded output (AdamW lr 5e-4, 1,500 steps of 8 queries, cosine; same recipe for every N, no tuning). Check: the training forward pass with the fine-tuned weights reproduces the recorded outputs bitwise for all three secret parts. Secret parts: the three where attack 1 failed most (Long 0–12); added 2026-11-21 (`split/run_secret_lora_more.sh`, same recipe): layers 9–16 (recorded at layers 8/16) and layers 1–9 (the black box's layer-9 recording, `record9`), to match the black-box blocks. Layers 1–8 alone were not refitted (1–9 is used instead).
 
 Successes out of 100, held-out starts 40–49 (real model 95 Spatial, 94 Long; attack 1 = public weights, no training):
 
@@ -819,13 +824,13 @@ Fit time on one RTX 4090: 17.6–21.3 min (layers 1–16), 39.2–41.0 min (visi
 
 ### Takeaways
 
-- **No secret part tested protects OFT.** With 100 observed queries (under a minute of robot time) and a 9–48 minute fit, every repaired part matches the real model on Spatial (95–98 vs. 95); on Long, 100 queries give 86–93 and 1,000 give 91–94 (real 94), within ~3 points (all five parts; the paper's four parts, without vision + 1–8: 86–93 and 92–94, fits 9–41 min).
+- **No secret part tested protects OFT.** With 100 observed queries (under a minute of robot time) and a 9–48 minute fit, every repaired part matches the real model on Spatial (95–98 vs. 95); on Long, 100 queries give 86–93 and 1,000 give 91–94 (real 94), within ~3 points (all five parts; without vision + 1–8: 86–93 and 92–94, fits 9–41 min).
 - **The reason is the public starting point.** OFT is `openvla-7b` + a rank-32 change, so the attacker only has to recover a small low-rank correction, and the secret part's output gives them a rich target (every token's hidden state, not just 7 action numbers). Parts that the free swap broke (Long 0–12) are mostly repaired from 100 queries (Long 86–90) and to within ~3 points from 1,000.
 - **Together with §6–12:** keeping the top (head or top layers), the middle (layers 9–16: public weights alone give 90 / 77) or the beginning (vision encoder, early layers) secret all fail, at ~100–1,000 observed queries. For a model fine-tuned from public weights, hiding part of it is not a protection on its own; what would have to stay secret is something not derivable from public weights plus a little observed traffic. Without public weights, see the black-box results below.
 
 - **Layers 9–16 and 1–9 (added 2026-11-21):** the same LoRA recipe repairs both. Spatial 96–98 from 100 queries (public weights alone: 90 and 96); Long 90 and 93 from 100 queries and 94 / 94 from 1,000 (public alone: 77 and 86; real 94). So every block also attacked from scratch (9–16, 1–9, 1–16) is rebuilt to within ~3 points from ≤ 1,000 queries when public weights are available. The layers 1–9 output error after fitting is ~10× lower than for the other parts in the scaled MSE (0.002 vs. 0.017–0.024 at N = 100), though not in relative error, where 1–9 and 9–16 end equal (0.0081 vs. 0.0078; public 0.105 vs. 0.021).
 
-**Caveats:** one seed, 100 episodes per cell (±~3–5); one fit per cell with one recipe (an attacker could only do better); OFT only, Spatial and Long; not run on layers 1–8 alone (the paper uses 1–9) or other blocks.
+**Caveats:** one seed, 100 episodes per cell (±~3–5); one fit per cell with one recipe (an attacker could only do better); OFT only, Spatial and Long; not run on layers 1–8 alone (1–9 instead) or other blocks.
 
 ### Black box: no public weights, replacement trained from scratch
 
@@ -876,7 +881,7 @@ Fit time (N = 5,000, one RTX 4090): ~8 min (linear, MLP), ~27 min (2-layer), ~50
 
 ### Black-box follow-up: layers 1–9, end-to-end fine-tuning and a second seed (2026-11-18 to 11-21)
 
-`split/run_blackbox_more.sh`, `run_blackbox_fill.sh`, `run_blackbox_e2e.sh`, `run_blackbox_19.sh`, `run_blackbox_e2e16.sh`, `run_blackbox_seed1.sh`; `split/fit_blackbox.py` (`--seed`, `--steps`), `split/fit_blackbox_e2e.py`, `split/diagnose_blackbox.py`, `split/attribute_blackbox.py`, `split/check_record_actions.py`. Questions (user): does a secret block that starts at the input and ends earlier (layers 1–9) protect better; are the fits repeatable; does longer training help. Layer 9 was re-recorded from the same training starts (`$VLA_DATA/blackbox/record9`; same query files as the attack-2 recording, identical input embeddings on the 50 checked).
+`split/run_blackbox_more.sh`, `run_blackbox_fill.sh`, `run_blackbox_e2e.sh`, `run_blackbox_19.sh`, `run_blackbox_e2e16.sh`, `run_blackbox_seed1.sh`; `split/fit_blackbox.py` (`--seed`, `--steps`), `split/fit_blackbox_e2e.py`, `split/diagnose_blackbox.py`, `split/attribute_blackbox.py`, `split/check_record_actions.py`. Questions: does a secret block that starts at the input and ends earlier (layers 1–9) protect better; are the fits repeatable; does longer training help. Layer 9 was re-recorded from the same training starts (`$VLA_DATA/blackbox/record9`; same query files as the attack-2 recording, identical input embeddings on the 50 checked).
 
 **Two training methods.** *Simple:* as above (per-feature scaled squared error at the block's output, 10,000 steps, best step on 20% of the N queries). *End to end:* start from the simple fit and fine-tune it through the attacker's own frozen copy of layers b+1–32, final norm and action head, so the model's actions match the actions the robot executed on the recorded queries (loss: L1 on normalized actions + the simple loss at the block output as an anchor; 3,000 steps of 4 queries, lr 5e-5, best step by action L1 on the same 20% selection queries; 8-bit AdamW for the 4-layer replacement to fit 24 GB). It uses only what the attacker has (later layers, head, executed actions), but more than the secret part's own input and output. Only for blocks starting at layer 1 (the queries start from the recorded LLM input).
 

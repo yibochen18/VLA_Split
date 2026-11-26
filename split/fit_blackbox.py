@@ -22,8 +22,8 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import blackbox  # noqa: E402
-from secret_lora import query_files  # noqa: E402
+import blackbox
+from secret_lora import query_files
 
 
 def parse_args():
@@ -152,7 +152,7 @@ def fit_sgd(module, train, sel, scale, dev, args):
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, (s + 1) / 200) * 0.5 * (1 + torch.cos(torch.tensor(s / args.steps * torch.pi)).item()))
     rng = random.Random(1 + args.seed)
-    snapshot = lambda: {k: v.detach().to("cpu", copy=True) for k, v in module.state_dict().items()}  # noqa: E731
+    snapshot = lambda: {k: v.detach().to("cpu", copy=True) for k, v in module.state_dict().items()}
     best = (evaluate(module, sel, scale, dev), 0, snapshot())
     log = [{"step": 0, "sel": best[0]}]
     t0 = time.time()

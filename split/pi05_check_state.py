@@ -15,7 +15,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pi05_server import Server, load_policy  # noqa: E402
+from pi05_server import Server, load_policy
 
 
 def main():

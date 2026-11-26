@@ -30,8 +30,6 @@ eval_run() {  # suite perturbation policy
         "${extra[@]}" 2>&1 | grep -E '^Success|Traceback|Error')
 }
 
-# Wait for the follow-ups
-until grep -q 'ALL DONE' "$VLA_LOGS/linear_followup.log" 2>/dev/null; do sleep 300; done
 
 for suite in libero_spatial libero_10; do
     for kind in camera objects dark noise; do

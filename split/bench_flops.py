@@ -19,14 +19,14 @@ torch.inference_mode = lambda mode=True: torch.no_grad()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-from experiments.robot.libero.libero_utils import get_libero_dummy_action, get_libero_env  # noqa: E402
-from experiments.robot.robot_utils import get_image_resize_size, set_seed_everywhere  # noqa: E402
-import paths  # noqa: E402
-from model1 import Model1  # noqa: E402
-from model2 import Model2  # noqa: E402
-from replacement import ReplacementModel2, forward_steps  # noqa: E402
-from verify_offline import CHECKPOINTS  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+from experiments.robot.libero.libero_utils import get_libero_dummy_action, get_libero_env
+from experiments.robot.robot_utils import get_image_resize_size, set_seed_everywhere
+import paths
+from model1 import Model1
+from model2 import Model2
+from replacement import ReplacementModel2, forward_steps
+from verify_offline import CHECKPOINTS
 
 
 def parse_args():

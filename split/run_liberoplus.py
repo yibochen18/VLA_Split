@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import paths  # noqa: E402
+import paths
 
 SUITES = {"libero_spatial": 2402, "libero_object": 2518, "libero_goal": 2591, "libero_10": 2519}
 SETUPS = ["pi05_real", "pi05_linear", "pi05_mlp", "oft_real", "oft_linear"]

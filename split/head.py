@@ -9,7 +9,6 @@ LLM_DIM = 4096
 
 
 class MLPResNetBlock(nn.Module):
-    """One MLP ResNet block with a residual connection."""
 
     def __init__(self, dim):
         super().__init__()
@@ -25,7 +24,6 @@ class MLPResNetBlock(nn.Module):
 
 
 class MLPResNet(nn.Module):
-    """MLP with residual connection blocks."""
 
     def __init__(self, num_blocks, input_dim, hidden_dim, output_dim):
         super().__init__()

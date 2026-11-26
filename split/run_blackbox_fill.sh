@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Black-box gaps (RESULTS §17): extra seeds, tf8 / 30k-step runs, per-token maps for layers 1-9.
+# Black-box gaps (RESULTS §17): extra seeds, tf8 / 30k-step runs, per-token maps for layers 1-9. Only partly run (stopped once the end-to-end fix worked); RESULTS §17 lists the runs that finished.
 source "$(dirname "$0")/../env.sh" && vla_activate
 set -o pipefail
 ROOT=$VLA_DATA/blackbox
@@ -47,10 +47,8 @@ for seed in 1 2; do
 done
 run 1 9 tf8 "$nmax" 30000 0
 for blk in "1 9" "1 16" "9 16"; do
-    # shellcheck disable=SC2086
     run $blk tf4 "$nmax" 30000 0
     for n in 1000 5000; do
-        # shellcheck disable=SC2086
         run $blk tf8 $n 10000 0
     done
 done

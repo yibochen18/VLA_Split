@@ -10,11 +10,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-import paths  # noqa: E402
-from model1 import Model1  # noqa: E402
-from model2 import Model2  # noqa: E402
-from split_client import SplitClient, start_server  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+import paths
+from model1 import Model1
+from model2 import Model2
+from split_client import SplitClient, start_server
 
 CHECKPOINTS = {
     "libero_spatial": "moojink/openvla-7b-oft-finetuned-libero-spatial",

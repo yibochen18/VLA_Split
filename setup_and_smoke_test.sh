@@ -49,6 +49,8 @@ pip install "numpy<2" "opencv-python==4.10.0.84"
 pip install "tensorflow-metadata==1.15.0" "wandb==0.16.6"
 # mujoco 3.17 fails robosuite 1.4.1's joint-type assertion when building LIBERO scenes
 pip install "mujoco==3.3.0"
+# 8-bit AdamW for the 4-layer black-box replacements (fit_blackbox*.py --optim adamw8bit)
+pip install "bitsandbytes==0.43.3"
 # LIBERO asks an interactive question on first import; answer N to use default paths
 echo n | python -c "import libero.libero" || true
 

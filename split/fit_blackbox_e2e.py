@@ -17,13 +17,13 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-from experiments.robot.robot_utils import get_model  # noqa: E402
-import paths  # noqa: E402
-import blackbox  # noqa: E402
-from model2 import Model2  # noqa: E402
-from secret_lora import query_files, run_layers  # noqa: E402
-from verify_offline import CHECKPOINTS  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+from experiments.robot.robot_utils import get_model
+import paths
+import blackbox
+from model2 import Model2
+from secret_lora import query_files, run_layers
+from verify_offline import CHECKPOINTS
 
 
 def parse_args():
@@ -121,7 +121,7 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, (s + 1) / 100) * 0.5 * (1 + np.cos(s / args.steps * np.pi)))
     rng = random.Random(1)
-    snapshot = lambda: {k: v.detach().to("cpu", copy=True) for k, v in module.state_dict().items()}  # noqa: E731
+    snapshot = lambda: {k: v.detach().to("cpu", copy=True) for k, v in module.state_dict().items()}
     best = (evaluate(sel), 0, snapshot())
     log = [{"step": 0, "sel_action_l1": best[0]}]
     print(f"start: selection action L1 {best[0]:.4f}", flush=True)

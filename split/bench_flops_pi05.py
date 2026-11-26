@@ -16,8 +16,8 @@ from torch.utils.flop_counter import FlopCounterMode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pi05_server import RESIZE, ReadoutPolicy, load_policy  # noqa: E402
-from openpi_client import image_tools  # noqa: E402
+from pi05_server import RESIZE, ReadoutPolicy, load_policy
+from openpi_client import image_tools
 
 PROMPTS = [  # one per suite, shortest to longest
     "open the middle drawer of the cabinet",

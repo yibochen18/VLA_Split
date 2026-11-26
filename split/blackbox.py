@@ -20,7 +20,6 @@ from transformers import LlamaConfig, LlamaModel
 D = 4096
 
 
-# --- Replacements
 
 class Identity(nn.Module):
     def forward(self, h):
@@ -50,7 +49,7 @@ class PerToken(nn.Module):
 
 class SmallTransformer(nn.Module):
     """k Llama decoder layers at OFT's width (4096, 32 heads, MLP 11008), random init; run through LlamaModel so
-    the causal mask and rotary positions are handled as in the real model. Final norm skipped (residual stream)."""
+    the attention mask (bidirectional in OFT's fork) and rotary positions are handled as in the real model. Final norm skipped (residual stream)."""
 
     def __init__(self, n_layers):
         super().__init__()
@@ -92,7 +91,6 @@ class VisionViT(nn.Module):
         return torch.cat(toks, dim=1)
 
 
-# --- Saving, loading, serving
 
 def build(kind):
     if kind == "identity":
@@ -159,7 +157,6 @@ def install_vision_hooks(vla, module):
             vla.projector.register_forward_hook(replace_output)]
 
 
-# --- Training data
 
 def load_pairs(files, block):
     """(h_in, h_out) per recorded query, bf16 on CPU. Block input: layer a-1's output (0 = LLM input). Block

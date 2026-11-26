@@ -60,7 +60,6 @@ for suite in libero_spatial libero_10; do
     for n in $NS; do
         for c in "${CONFIGS[@]}"; do
             tag=${c%%:*}; parts=${c#*:}
-            # shellcheck disable=SC2086
             fit "$suite" "$tag" "$n" $parts && eval_run "$suite" "$tag" "$n" $parts || log "FAILED $suite $tag n=$n"
         done
     done

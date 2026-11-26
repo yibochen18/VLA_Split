@@ -47,7 +47,6 @@ cell() {  # suite a b kind
 for suite in libero_10 libero_spatial; do
     for blk in "1 16" "1 9" "9 16"; do
         for kind in tf2 tf4; do
-            # shellcheck disable=SC2086
             cell $suite $blk $kind
         done
     done

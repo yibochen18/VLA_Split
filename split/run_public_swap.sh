@@ -42,7 +42,6 @@ done
 for suite in libero_spatial libero_10; do
     for c in "${CONFIGS[@]}"; do
         tag=${c%%:*}; parts=${c#*:}
-        # shellcheck disable=SC2086
         eval_run "$suite" "$tag" $parts || log "FAILED $suite $tag"
     done
 done

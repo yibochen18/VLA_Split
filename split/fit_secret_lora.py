@@ -19,12 +19,12 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-from experiments.robot.robot_utils import get_model  # noqa: E402
-import paths  # noqa: E402,F401
-from public_swap import swap_public  # noqa: E402
-from secret_lora import add_lora, load_query, lora_state, query_files, secret_forward  # noqa: E402
-from verify_offline import CHECKPOINTS  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+from experiments.robot.robot_utils import get_model
+import paths
+from public_swap import swap_public
+from secret_lora import add_lora, load_query, lora_state, query_files, secret_forward
+from verify_offline import CHECKPOINTS
 
 
 def parse_args():

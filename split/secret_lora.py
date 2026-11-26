@@ -61,7 +61,6 @@ def load_query(path, parts, device):
     return q, target.to(device)
 
 
-# --- The secret part's forward pass
 
 def secret_forward(vla, parts, q):
     """Secret part's input -> output for one recorded query (batch 1). With vision secret, the patch embeddings
@@ -90,7 +89,6 @@ def run_layers(vla, h, mask, a, b):
         llama.layers, llama.norm, llama.config.num_hidden_layers = layers, norm, n
 
 
-# --- LoRA (rank r, scale alpha / r, as OFT's fine-tune)
 
 class LoRALinear(nn.Module):
     """y = base(x) + (alpha / r) B A x; A, B in fp32, B starts at zero."""

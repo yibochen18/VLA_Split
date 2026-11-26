@@ -5,7 +5,7 @@ import struct
 
 import numpy as np
 
-from protocol import MAGIC_STATS, encode_response, read_response, recv_exact  # noqa: F401
+from protocol import MAGIC_STATS, encode_response, read_response, recv_exact
 
 REQUEST_HEADER = struct.Struct("<4sQI")  # magic, request id, length of the JSON metadata
 MAGIC_QUERY = b"PI5Q"

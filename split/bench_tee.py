@@ -18,11 +18,11 @@ from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import paths  # noqa: E402
-from bench_depth import stats, timed  # noqa: E402
-from head import ACTION_DIM, NUM_ACTIONS_CHUNK  # noqa: E402
-from model2 import Model2  # noqa: E402
-from verify_offline import CHECKPOINTS  # noqa: E402
+import paths
+from bench_depth import stats, timed
+from head import ACTION_DIM, NUM_ACTIONS_CHUNK
+from model2 import Model2
+from verify_offline import CHECKPOINTS
 
 NUM_PATCHES = 2 * 256 + 1  # two 224px images at patch 14, plus the proprio token
 STOP = 1

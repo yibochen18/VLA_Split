@@ -15,13 +15,13 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import experiments.robot.libero.run_libero_eval as rle  # noqa: E402
-from experiments.robot.robot_utils import get_model  # noqa: E402
-import paths  # noqa: E402,F401
-import blackbox  # noqa: E402
-from model2 import Model2  # noqa: E402
-from secret_lora import query_files  # noqa: E402
-from verify_offline import CHECKPOINTS  # noqa: E402
+import experiments.robot.libero.run_libero_eval as rle
+from experiments.robot.robot_utils import get_model
+import paths
+import blackbox
+from model2 import Model2
+from secret_lora import query_files
+from verify_offline import CHECKPOINTS
 
 HUGE = 300.0
 

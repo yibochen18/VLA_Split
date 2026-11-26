@@ -13,7 +13,7 @@ import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 
-import paths  # noqa: F401  (sets HF_HOME via env.sh conventions)
+import paths  # sets HF_HOME
 from verify_offline import CHECKPOINTS
 
 

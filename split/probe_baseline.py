@@ -79,7 +79,6 @@ def main():
     model, action_head, proprio_projector, noisy_action_projector, processor = rle.initialize_model(cfg)
     resize_size = get_image_resize_size(cfg)
 
-    # Sizes
     sizes = {
         "action_head_params": count_params(action_head),
         "action_head_bytes": module_bytes(action_head),
@@ -89,7 +88,6 @@ def main():
         "vla_bytes": module_bytes(model),
     }
 
-    # Instrumentation
     timer = ComponentTimer()
     if not args.no_component_timers:
         timer.attach("vision_backbone", model.vision_backbone)
