@@ -3,7 +3,7 @@
 Does keeping part of a VLA secret (in a TEE or on a server) protect it from the robot's owner? We split OpenVLA-OFT into
 Model 1 (vision + Llama 2) and Model 2 (action head), hide one part at a time, and test whether an attacker who sees
 everything outside it can rebuild a working replacement. Evaluated in closed loop on LIBERO. Side studies: π0.5 and
-LIBERO-Plus. Full numbers: [docs/RESULTS.md](docs/RESULTS.md).
+LIBERO-Plus. Full numbers: [docs/RESULTS.md](docs/RESULTS.md); interactive results: [vlasplit.netlify.app](https://vlasplit.netlify.app/).
 
 ## Findings
 
